@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan Results — DICOM Importer</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0e14;
+    --surface: #141820;
+    --surface2: #1c2130;
+    --border: #2a3045;
+    --accent: #00d4ff;
+    --accent2: #0099cc;
+    --accent-dim: rgba(0,212,255,0.12);
+    --text: #e8edf5;
+    --text-muted: #6b7a99;
+    --success: #00e5a0;
+    --warning: #ffb444;
+    --danger: #ff5566;
+    --mono: 'Space Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: var(--sans); min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 0 20px 80px;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background-image: linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px; pointer-events: none; z-index: 0;
+  }
+
+  header {
+    width: 100%; max-width: 760px;
+    padding: 40px 0 28px; position: relative; z-index: 1;
+    display: flex; align-items: flex-end; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+  }
+  .header-left .tag {
+    font-family: var(--mono); font-size: 11px; color: var(--accent);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .header-left .tag::before { content:''; width:24px; height:1px; background:var(--accent); }
+  h1 { font-family: var(--mono); font-size: clamp(22px,4vw,32px); font-weight:700; line-height:1.1; }
+  h1 span { color: var(--accent); }
+  .header-meta {
+    font-size: 13px; color: var(--text-muted); margin-top: 4px;
+    font-family: var(--mono);
+  }
+  .header-meta strong { color: var(--accent); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 20px; border-radius: 8px; font-family: var(--mono);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.05em;
+    cursor: pointer; transition: all 0.15s; border: none; text-decoration: none;
+  }
+  .btn-back { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
+  .btn-back:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-upload-all {
+    background: var(--accent); color: #000;
+    padding: 13px 28px; font-size: 13px;
+  }
+  .btn-upload-all:hover { background: #33ddff; box-shadow: 0 4px 20px rgba(0,212,255,0.3); transform: translateY(-1px); }
+  .btn-upload-all:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .btn-study {
+    background: var(--surface2); color: var(--accent);
+    border: 1px solid rgba(0,212,255,0.3);
+    padding: 9px 16px; font-size: 12px;
+  }
+  .btn-study:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .btn-study:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .top-bar {
+    width: 100%; max-width: 760px;
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    margin-bottom: 20px; position: relative; z-index: 1;
+  }
+  .study-count {
+    font-family: var(--mono); font-size: 12px; color: var(--text-muted);
+  }
+  .study-count strong { color: var(--text); }
+
+  /* Study cards */
+  .studies-grid {
+    width: 100%; max-width: 760px;
+    display: flex; flex-direction: column; gap: 10px;
+    position: relative; z-index: 1;
+  }
+
+  .study-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px; display: flex; align-items: center; gap: 16px;
+    transition: border-color 0.15s;
+  }
+  .study-card:hover { border-color: #3a4560; }
+  .study-card.uploading { border-color: rgba(0,212,255,0.4); }
+  .study-card.done-success { border-color: rgba(0,229,160,0.4); }
+  .study-card.done-error { border-color: rgba(255,85,102,0.4); }
+
+  .modality-badge {
+    min-width: 48px; height: 48px; background: var(--accent-dim);
+    border: 1px solid rgba(0,212,255,0.25); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    color: var(--accent); flex-shrink: 0;
+  }
+
+  .study-info { flex: 1; min-width: 0; }
+  .study-patient {
+    font-size: 15px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .study-desc {
+    font-size: 13px; color: var(--text-muted); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .study-meta {
+    display: flex; align-items: center; gap: 12px; margin-top: 6px; flex-wrap: wrap;
+  }
+  .meta-pill {
+    font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+    background: var(--surface2); padding: 2px 8px; border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  /* Time-taken pill shown after a study finishes */
+  .time-pill {
+    font-family: var(--mono); font-size: 10px;
+    background: rgba(0,229,160,0.08); color: var(--success);
+    padding: 2px 8px; border-radius: 4px;
+    border: 1px solid rgba(0,229,160,0.25);
+    display: none; /* shown by JS */
+  }
+  .time-pill.visible { display: inline-flex; align-items: center; gap: 4px; }
+
+  .study-status {
+    min-width: 90px; text-align: right; font-family: var(--mono); font-size: 11px;
+    color: var(--text-muted); flex-shrink: 0;
+  }
+
+  /* Mini progress bar inside each card while uploading */
+  .card-progress-wrap {
+    width: 100%; height: 3px; background: var(--surface2);
+    border-radius: 99px; overflow: hidden; margin-top: 8px; display: none;
+  }
+  .card-progress-wrap.active { display: block; }
+  .card-progress-bar {
+    height: 100%; background: var(--accent); border-radius: 99px;
+    transition: width 0.3s ease; width: 0%;
+  }
+
+  /* Progress overlay */
+  #progress-overlay {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(11,14,20,0.92); backdrop-filter: blur(8px);
+    align-items: center; justify-content: center;
+  }
+  #progress-overlay.active { display: flex; }
+
+  .progress-box {
+    width: 500px; max-width: 94vw;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 36px 32px;
+  }
+  .progress-title {
+    font-family: var(--mono); font-size: 13px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .spinning { animation: spin 0.8s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .big-count {
+    font-family: var(--mono); font-size: 52px; font-weight: 700;
+    color: var(--accent); line-height: 1; margin-bottom: 4px;
+  }
+  .big-count-label {
+    font-size: 13px; color: var(--text-muted); margin-bottom: 24px;
+  }
+
+  .prog-bar-wrap {
+    width: 100%; height: 6px; background: var(--surface2);
+    border-radius: 99px; overflow: hidden; margin-bottom: 14px;
+  }
+  .prog-bar {
+    height: 100%; background: var(--accent); border-radius: 99px;
+    transition: width 0.3s ease; width: 0%;
+    box-shadow: 0 0 10px rgba(0,212,255,0.5);
+  }
+
+  .prog-stats {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 12px; color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .prog-stats .fail { color: var(--danger); }
+  .prog-stats .ok { color: var(--success); }
+
+  /* Elapsed time row in overlay */
+  .elapsed-row {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    margin-bottom: 10px; display: flex; justify-content: space-between;
+  }
+  .elapsed-row span { color: var(--accent); }
+
+  .last-file {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    background: var(--surface2); padding: 8px 12px; border-radius: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Per-study timing log inside overlay */
+  .study-log {
+    margin-top: 14px; max-height: 120px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .study-log-entry {
+    font-family: var(--mono); font-size: 10px;
+    background: var(--surface2); border-radius: 4px;
+    padding: 5px 10px; display: flex; justify-content: space-between;
+    color: var(--text-muted);
+  }
+  .study-log-entry .log-uid { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+  .study-log-entry .log-time { color: var(--success); flex-shrink: 0; margin-left: 12px; }
+  .study-log-entry .log-err { color: var(--danger); flex-shrink: 0; margin-left: 8px; }
+
+  /* Done state */
+  .done-banner { text-align: center; padding: 12px 0; }
+  .done-icon { font-size: 42px; margin-bottom: 10px; }
+  .done-title {
+    font-family: var(--mono); font-size: 18px; font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .done-title.success { color: var(--success); }
+  .done-title.partial { color: var(--warning); }
+  .done-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
+  .done-time { font-family: var(--mono); font-size: 13px; color: var(--accent); margin-bottom: 20px; }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%) translateY(80px);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 22px;
+    font-size: 14px; font-family: var(--mono); color: var(--text);
+    display: flex; align-items: center; gap: 10px;
+    z-index: 200; transition: transform 0.3s ease; pointer-events: none;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+  #toast.success { border-color: rgba(0,229,160,0.4); }
+  #toast.error { border-color: rgba(255,85,102,0.4); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <div class="tag">Scan Results</div>
+    <h1>Found <span>{{ studies|length }}</span> {{ 'Study' if studies|length == 1 else 'Studies' }}</h1>
+    <div class="header-meta">Drive: <strong>{{ drive }}</strong></div>
+  </div>
+  <a href="/" class="btn btn-back">← Back</a>
+</header>
+
+{% if studies %}
+<div class="top-bar">
+  <div class="study-count">
+    <strong>{{ studies|length }}</strong> study/studies across {{ studies | map(attribute='patient') | unique | list | length }} patient(s)
+  </div>
+  <button class="btn btn-upload-all" id="btn-upload-all" onclick="startUpload(null, null, null)">
+    ⬆ Upload All Studies
+  </button>
+</div>
+
+<div class="studies-grid">
+  {% for s in studies %}
+  <div class="study-card" id="card-{{ loop.index0 }}"
+       data-patient="{{ s.patient }}" data-study="{{ s.study_uid }}">
+    <div class="modality-badge">{{ s.modality if s.modality else '??' }}</div>
+    <div class="study-info">
+      <div class="study-patient">{{ s.patient }}</div>
+      <div class="study-desc">{{ s.desc if s.desc else '— No description —' }}</div>
+      <div class="study-meta">
+        {% if s.date %}
+        <span class="meta-pill">📅 {{ s.date[:4] + '-' + s.date[4:6] + '-' + s.date[6:] if s.date|length == 8 else s.date }}</span>
+        {% endif %}
+        <span class="meta-pill">{{ s.count }} image{{ 's' if s.count != 1 else '' }}</span>
+        <span class="meta-pill" style="word-break:break-all;font-size:9px;">{{ s.study_uid[:24] }}…</span>
+        <!-- Time pill shown after upload completes -->
+        <span class="time-pill" id="time-{{ s.study_uid }}">⏱ —</span>
+      </div>
+      <!-- Mini progress bar per card -->
+      <div class="card-progress-wrap" id="cpw-{{ s.study_uid }}">
+        <div class="card-progress-bar" id="cpb-{{ s.study_uid }}"></div>
+      </div>
+    </div>
+    <div class="study-status" id="status-{{ loop.index0 }}">—</div>
+    <button class="btn btn-study" id="btn-{{ loop.index0 }}"
+            onclick="startUpload('{{ s.patient }}', '{{ s.study_uid }}', {{ loop.index0 }})">
+      Upload
+    </button>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<div style="max-width:760px;width:100%;text-align:center;padding:60px 20px;color:var(--text-muted);position:relative;z-index:1;">
+  <div style="font-size:48px;margin-bottom:16px;">📀</div>
+  <div style="font-family:var(--mono);font-size:18px;color:var(--text);margin-bottom:8px;">No DICOM studies found</div>
+  <div style="font-size:14px;">The drive may not contain DICOM files, or the path is incorrect.</div>
+  <a href="/" class="btn btn-back" style="margin-top:24px;">← Try Again</a>
+</div>
+{% endif %}
+
+<!-- Progress Overlay -->
+<div id="progress-overlay">
+  <div class="progress-box" id="progress-box">
+    <div id="progress-inner">
+      <div class="progress-title">
+        <span class="spinning">⟳</span> Uploading to Orthanc
+      </div>
+      <div class="big-count" id="pct">0%</div>
+      <div class="big-count-label" id="prog-label">Preparing...</div>
+      <div class="prog-bar-wrap"><div class="prog-bar" id="prog-bar"></div></div>
+      <div class="prog-stats">
+        <span class="ok" id="stat-ok">✓ 0 uploaded</span>
+        <span id="stat-total">0 total</span>
+        <span class="fail" id="stat-fail" style="display:none">✗ 0 failed</span>
+      </div>
+      <div class="elapsed-row">
+        <span>Elapsed</span><span id="stat-elapsed">0s</span>
+      </div>
+      <div class="last-file" id="last-file">—</div>
+      <!-- Per-study timing log -->
+      <div class="study-log" id="study-log"></div>
+    </div>
+    <div class="done-banner" id="done-banner" style="display:none"></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+  let activeEventSource = null;
+
+  // Map study_uid -> { cardIndex, total, done } for per-card progress tracking
+  const studyCardMap = {};
+  document.querySelectorAll('.study-card').forEach((card, i) => {
+    const uid = card.dataset.study;
+    studyCardMap[uid] = { cardIndex: i };
+  });
+
+  // Track per-study file counts for the mini progress bars
+  const studyFileCounts = {};
+  const studyDoneCounts = {};
+
+  function startUpload(patient, studyUid, cardIndex) {
+    const params = new URLSearchParams();
+    if (patient && studyUid) {
+      params.set('patient', patient);
+      params.set('study', studyUid);
+    }
+
+    // Disable buttons
+    document.getElementById('btn-upload-all').disabled = true;
+    if (cardIndex !== null && cardIndex !== undefined) {
+      document.getElementById('btn-' + cardIndex).disabled = true;
+      document.getElementById('card-' + cardIndex).classList.add('uploading');
+    } else {
+      document.querySelectorAll('[id^="btn-"]').forEach(b => b.disabled = true);
+      document.querySelectorAll('.study-card').forEach(c => c.classList.add('uploading'));
+    }
+
+    // Reset overlay
+    document.getElementById('progress-inner').style.display = 'block';
+    document.getElementById('done-banner').style.display = 'none';
+    document.getElementById('pct').textContent = '0%';
+    document.getElementById('prog-label').textContent = 'Preparing...';
+    document.getElementById('prog-bar').style.width = '0%';
+    document.getElementById('stat-ok').textContent = '✓ 0 uploaded';
+    document.getElementById('stat-fail').style.display = 'none';
+    document.getElementById('last-file').textContent = '—';
+    document.getElementById('stat-elapsed').textContent = '0s';
+    document.getElementById('study-log').innerHTML = '';
+    document.getElementById('progress-overlay').classList.add('active');
+
+    // Reset card mini progress bars
+    document.querySelectorAll('.card-progress-wrap').forEach(w => {
+      w.classList.remove('active');
+      w.querySelector('.card-progress-bar').style.width = '0%';
+    });
+
+    const url = '/upload-stream?' + params.toString();
+    activeEventSource = new EventSource(url);
+    let total = 0, done = 0, failed = 0;
+
+    activeEventSource.onmessage = function(e) {
+      const msg = JSON.parse(e.data);
+
+      if (msg.type === 'start') {
+        total = msg.total;
+        document.getElementById('stat-total').textContent = total + ' total';
+        document.getElementById('prog-label').textContent = 'Uploading ' + total + ' files...';
+      }
+
+      if (msg.type === 'progress') {
+        done = msg.done; failed = msg.failed;
+        const pct = Math.round(done / msg.total * 100);
+        document.getElementById('pct').textContent = pct + '%';
+        document.getElementById('prog-bar').style.width = pct + '%';
+        document.getElementById('prog-label').textContent = done + ' / ' + msg.total + ' files';
+        document.getElementById('stat-ok').textContent = '✓ ' + (done - failed) + ' uploaded';
+        document.getElementById('last-file').textContent = msg.file;
+        document.getElementById('stat-elapsed').textContent = msg.elapsed + 's';
+        if (failed > 0) {
+          document.getElementById('stat-fail').style.display = 'inline';
+          document.getElementById('stat-fail').textContent = '✗ ' + failed + ' failed';
+        }
+
+        // Update per-card mini progress bar
+        const uid = msg.study_uid;
+        if (uid) {
+          if (!studyFileCounts[uid]) studyFileCounts[uid] = 0;
+          if (!studyDoneCounts[uid]) studyDoneCounts[uid] = 0;
+          studyDoneCounts[uid]++;
+          const wrap = document.getElementById('cpw-' + uid);
+          if (wrap) {
+            wrap.classList.add('active');
+            // We don't know the total per study from this event alone,
+            // so use the global percentage as a proxy when uploading all,
+            // and let study_done snap it to 100%.
+            const bar = document.getElementById('cpb-' + uid);
+            if (bar) bar.style.width = pct + '%';
+          }
+          // Update card status text
+          const entry = studyCardMap[uid];
+          if (entry !== undefined) {
+            const si = document.getElementById('status-' + entry.cardIndex);
+            if (si) si.textContent = pct + '%';
+          }
+        }
+
+        // Global card status for single-study upload
+        if (cardIndex !== null && cardIndex !== undefined) {
+          document.getElementById('status-' + cardIndex).textContent = pct + '%';
+        }
+      }
+
+      if (msg.type === 'study_done') {
+        const uid = msg.study_uid;
+        // Snap mini bar to 100%
+        const bar = document.getElementById('cpb-' + uid);
+        if (bar) bar.style.width = '100%';
+
+        // Show time-taken pill on card
+        const pill = document.getElementById('time-' + uid);
+        if (pill) {
+          pill.textContent = '⏱ ' + msg.elapsed_str;
+          pill.classList.add('visible');
+        }
+
+        // Append to study log inside overlay
+        const log = document.getElementById('study-log');
+        const entry = document.createElement('div');
+        entry.className = 'study-log-entry';
+        const errBit = msg.failed > 0
+          ? `<span class="log-err">✗ ${msg.failed} err</span>` : '';
+        entry.innerHTML = `<span class="log-uid">${uid}</span><span class="log-time">⏱ ${msg.elapsed_str}</span>${errBit}`;
+        log.appendChild(entry);
+        log.scrollTop = log.scrollHeight;
+
+        // Mark card done
+        const cardEntry = studyCardMap[uid];
+        if (cardEntry !== undefined) {
+          const card = document.getElementById('card-' + cardEntry.cardIndex);
+          if (card) {
+            card.classList.remove('uploading');
+            card.classList.add(msg.failed === 0 ? 'done-success' : 'done-error');
+          }
+          const si = document.getElementById('status-' + cardEntry.cardIndex);
+          if (si) si.innerHTML = msg.failed === 0
+            ? '<span style="color:var(--success)">✓ Done</span>'
+            : '<span style="color:var(--danger)">✗ Error</span>';
+        }
+      }
+
+      if (msg.type === 'done') {
+        activeEventSource.close();
+        const success = msg.failed === 0;
+        const partial = msg.failed > 0 && msg.succeeded > 0;
+
+        document.getElementById('progress-inner').style.display = 'none';
+        const banner = document.getElementById('done-banner');
+        banner.style.display = 'block';
+
+        const timeStr = msg.elapsed_str || (msg.elapsed + 's');
+
+        if (success) {
+          banner.innerHTML = `
+            <div class="done-icon">✅</div>
+            <div class="done-title success">Upload Complete</div>
+            <div class="done-sub">${msg.succeeded} file${msg.succeeded !== 1 ? 's' : ''} sent to Orthanc</div>
+            <div class="done-time">⏱ Total time: ${timeStr}</div>
+            <button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>
+          `;
+          showToast('success', '✓ ' + msg.succeeded + ' files uploaded in ' + timeStr);
+        } else if (partial) {
+          banner.innerHTML = `
+            <div class="done-icon">⚠️</div>
+            <div class="done-title partial">Partial Upload</div>
+            <div class="done-sub">${msg.succeeded} succeeded, ${msg.failed} failed</div>
+            <div class="done-time">⏱ Total time: ${timeStr}</div>
+            <button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>
+          `;
+          showToast('error', '⚠ ' + msg.failed + ' files failed to upload');
+        } else {
+          banner.innerHTML = `
+            <div class="done-icon">❌</div>
+            <div class="done-title" style="color:var(--danger)">Upload Failed</div>
+            <div class="done-sub">All ${msg.total} files failed. Check Orthanc connection.</div>
+            <div class="done-time">⏱ Total time: ${timeStr}</div>
+            <button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>
+          `;
+          showToast('error', '✗ Upload failed — check Orthanc connection');
+        }
+
+        // Re-enable all buttons
+        document.getElementById('btn-upload-all').disabled = false;
+        document.querySelectorAll('[id^="btn-"]').forEach(b => b.disabled = false);
+      }
+    };
+
+    activeEventSource.onerror = function() {
+      activeEventSource.close();
+      document.getElementById('progress-inner').style.display = 'none';
+      const banner = document.getElementById('done-banner');
+      banner.style.display = 'block';
+      banner.innerHTML = `
+        <div class="done-icon">❌</div>
+        <div class="done-title" style="color:var(--danger)">Connection Error</div>
+        <div class="done-sub">Lost connection to server during upload.</div>
+        <button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>
+      `;
+      showToast('error', '✗ Connection lost during upload');
+      document.getElementById('btn-upload-all').disabled = false;
+      document.querySelectorAll('[id^="btn-"]').forEach(b => b.disabled = false);
+    };
+  }
+
+  function closeOverlay() {
+    document.getElementById('progress-overlay').classList.remove('active');
+  }
+
+  function showToast(type, msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = type;
+    setTimeout(() => t.classList.add('show'), 10);
+    setTimeout(() => t.classList.remove('show'), 4000);
+  }
+
+  // Close overlay on backdrop click
+  document.getElementById('progress-overlay').addEventListener('click', function(e) {
+    if (e.target === this) closeOverlay();
+  });
+</script>
+</body>
+</html>
