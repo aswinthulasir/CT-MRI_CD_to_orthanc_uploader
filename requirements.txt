@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 pydicom
-httpx
+httpx[http2]>=0.27.0
 jinja2
 python-multipart
+psutil>=5.9.0

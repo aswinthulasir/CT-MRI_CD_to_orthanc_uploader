@@ -616,167 +616,205 @@
       border: 1px solid rgba(255, 85, 102, 0.3);
       color: var(--danger);
     }
-  </style>
-</head>
 
-<body>
-  <header>
-    <div class="header-left">
-      <div class="tag">Scan Results</div>
-      <h1>Found <span> {{ studies|length }}
+    </head><body><header><div class="header-left"><div class="tag">Scan Results</div><h1>Found <span> {
+        {
+        studies|length
+      }
+    }
 
-        </span> {{ 'Study' if studies|length==1 else 'Studies' }}
+    </span> {
+        {
+        'Study' if studies|length==1 else 'Studies'
+      }
+    }
 
-      </h1>
-      <div class="header-meta">Drive: <strong> {{ drive }}
+    </h1><div class="header-meta">Drive: <strong> {
+        {
+        drive
+      }
+    }
 
-        </strong></div>
-      <div class="header-meta">Method: <strong> {{ scan_method }}
+    </strong></div><div class="header-meta">Method: <strong> {
+        {
+        scan_method
+      }
+    }
 
-        </strong> {% if dicomdir %}
+    </strong> {
+      % if dicomdir %
+    }
 
-        &nbsp;
-        ·&nbsp;
+    &nbsp;
+    ·&nbsp;
 
-        DICOMDIR: <strong style="font-size:10px;word-break:break-all;"> {{ dicomdir }}
+    DICOMDIR: <strong style="font-size:10px;word-break:break-all;"> {
+        {
+        dicomdir
+      }
+    }
 
-        </strong> {% endif %}
+    </strong> {
+      % endif %
+    }
 
-      </div>
-    </div><a href="/" class="btn btn-back">← Back</a>
-  </header> {% if studies %}
+    </div></div><a href="/" class="btn btn-back">← Back</a></header> {
+      % if studies %
+    }
 
+    < !-- Mirror-status banner (shown for MIRROR strategies) --><div id="mirror-banner" class="mirror-banner"></div><div class="top-bar"><div class="study-count"><strong> {
+        {
+        studies|length
+      }
+    }
 
-  <div id="mirror-banner" class="mirror-banner"></div>
-  <div class="top-bar">
-    <div class="study-count"><strong> {{ studies|length }}
+    </strong>study/studies across {
+        {
+        studies | map(attribute='patient') | unique | list | length
+      }
+    }
 
-      </strong>study/studies across {{ studies | map(attribute='patient') | unique | list | length }}
+    patient(s) </div><button class="btn btn-upload-all" id="btn-upload-all" onclick="startUpload(null, null, null)">⬆ Upload All Studies</button></div><div class="studies-grid"> {
+      % for s in studies %
+    }
 
-      patient(s) </div><button class="btn btn-upload-all" id="btn-upload-all" onclick="startUpload(null, null, null)">⬆
-      Upload All Studies</button>
-  </div>
-  <div class="studies-grid"> {% for s in studies %}
+    <div class="study-card" id="card-{{ loop.index0 }}" data-patient="{{ s.patient }}" data-study="{{ s.study_uid }}"><div class="modality-badge"> {
+        {
+        s.modality if s.modality else '??'
+      }
+    }
 
-    <div class="study-card" id="card-{{ loop.index0 }}" data-patient="{{ s.patient }}" data-study="{{ s.study_uid }}">
-      <div class="modality-badge"> {{ s.modality if s.modality else '??' }}
+    </div><div class="study-info"><div class="study-patient"> {
+        {
+        s.patient
+      }
+    }
 
-      </div>
-      <div class="study-info">
-        <div class="study-patient"> {{ s.patient }}
+    </div><div class="study-desc"> {
+        {
+        s.desc if s.desc else '— No description —'
+      }
+    }
 
-        </div>
-        <div class="study-desc"> {{ s.desc if s.desc else '— No description —' }}
+    </div><div class="study-meta"> {
+      % if s.date %
+    }
 
-        </div>
-        <div class="study-meta"> {% if s.date %}
+    <span class="meta-pill">📅 {
+        {
+        s.date[: 4] + '-' + s.date[4:6] + '-' + s.date[6:] if s.date|length==8 else s.date
+      }
+    }
 
-          <span class="meta-pill">📅 {{ s.date[: 4] + '-' + s.date[4:6] + '-' + s.date[6:] if s.date|length==8 else
-            s.date }}
+    </span> {
+      % endif %
+    }
 
-          </span> {% endif %}
+      {
+      % if s.patient_id %
+    }
 
-          {% if s.patient_id %}
+    <span class="meta-pill">ID: {
+        {
+        s.patient_id
+      }
+    }
 
-          <span class="meta-pill">ID: {{ s.patient_id }}
+    </span> {
+      % endif %
+    }
 
-          </span> {% endif %}
+      {
+      % if s.patient_sex %
+    }
 
-          {% if s.patient_sex %}
+    <span class="meta-pill">Sex: {
+        {
+        s.patient_sex
+      }
+    }
 
-          <span class="meta-pill">Sex: {{ s.patient_sex }}
+    </span> {
+      % endif %
+    }
 
-          </span> {% endif %}
+      {
+      % if s.patient_age %
+    }
 
-          {% if s.patient_age %}
+    <span class="meta-pill">Age: {
+        {
+        s.patient_age
+      }
+    }
 
-          <span class="meta-pill">Age: {{ s.patient_age }}
+    </span> {
+      % endif %
+    }
 
-          </span> {% endif %}
+    <span class="meta-pill"> {
+        {
+        s.count
+      }
+    }
 
-          <span class="meta-pill"> {{ s.count }}
+    image {
+        {
+        's' if s.count !=1 else ''
+      }
+    }
 
-            image {{ 's' if s.count !=1 else '' }}
+    </span><span class="meta-pill" style="word-break:break-all;font-size:9px;"> {
+        {
+        s.study_uid[: 24]
+      }
+    }
 
-          </span><span class="meta-pill" style="word-break:break-all;font-size:9px;"> {{ s.study_uid[: 24] }}
+    …</span>< !-- Time pill shown after upload completes --><span class="time-pill" id="time-{{ s.study_uid }}">⏱ —</span></div>< !-- Mini progress bar per card --><div class="card-progress-wrap" id="cpw-{{ s.study_uid }}"><div class="card-progress-bar" id="cpb-{{ s.study_uid }}"></div></div></div><div class="study-status" id="status-{{ loop.index0 }}">—</div><button class="btn btn-study" id="btn-{{ loop.index0 }}"
 
-            …</span>
-          <span class="time-pill" id="time-{{ s.study_uid }}">⏱
-            —</span>
-        </div>
+    onclick="startUpload('{{ s.patient }}', '{{ s.study_uid }}', {{ loop.index0 }})">Upload</button></div> {
+      % endfor %
+    }
 
-        <div class="card-progress-wrap" id="cpw-{{ s.study_uid }}">
-          <div class="card-progress-bar" id="cpb-{{ s.study_uid }}"></div>
-        </div>
-      </div>
-      <div class="study-status" id="status-{{ loop.index0 }}">—</div><button class="btn btn-study"
-        id="btn-{{ loop.index0 }}"
-        onclick="startUpload('{{ s.patient }}', '{{ s.study_uid }}', {{ loop.index0 }})">Upload</button>
-    </div> {% endfor %}
+    </div> {
+      % else %
+    }
 
-  </div> {% else %}
+    <div style="max-width:760px;width:100%;text-align:center;padding:60px 20px;color:var(--text-muted);position:relative;z-index:1;"><div style="font-size:48px;margin-bottom:16px;">📀</div><div style="font-family:var(--mono);font-size:18px;color:var(--text);margin-bottom:8px;">No DICOM studies found</div><div style="font-size:14px;">The drive may not contain DICOM files,
+    or the path is incorrect.</div><a href="/" class="btn btn-back" style="margin-top:24px;">← Try Again</a></div> {
+      % endif %
+    }
 
-  <div
-    style="max-width:760px;width:100%;text-align:center;padding:60px 20px;color:var(--text-muted);position:relative;z-index:1;">
-    <div style="font-size:48px;margin-bottom:16px;">📀</div>
-    <div style="font-family:var(--mono);font-size:18px;color:var(--text);margin-bottom:8px;">No DICOM studies found
-    </div>
-    <div style="font-size:14px;">The drive may not contain DICOM files,
-      or the path is incorrect.</div><a href="/" class="btn btn-back" style="margin-top:24px;">← Try Again</a>
-  </div> {% endif %}
-
-
-  <div id="progress-overlay">
-    <div class="progress-box" id="progress-box">
-      <div id="progress-inner">
-        <div class="progress-title"><span class="spinning">⟳</span>Uploading to Orthanc </div>
-        <div class="big-count" id="pct">0%</div>
-        <div class="big-count-label" id="prog-label">Preparing...</div>
-        <div class="prog-bar-wrap">
-          <div class="prog-bar" id="prog-bar"></div>
-        </div>
-        <div class="prog-stats"><span class="ok" id="stat-ok">✓ 0 uploaded</span><span id="stat-total">0
-            total</span><span class="fail" id="stat-fail" style="display:none">✗ 0 failed</span></div>
-        <div class="elapsed-row"><span>Elapsed</span><span id="stat-elapsed">0s</span></div>
-        <div class="last-file" id="last-file">—</div>
-
-        <div class="study-log" id="study-log"></div>
-      </div>
-      <div class="done-banner" id="done-banner" style="display:none"></div>
-    </div>
-  </div>
-
-  <div id="toast"></div>
-  <script>let activeEventSource = null;
+    < !-- Progress Overlay --><div id="progress-overlay"><div class="progress-box" id="progress-box"><div id="progress-inner"><div class="progress-title"><span class="spinning">⟳</span>Uploading to Orthanc </div><div class="big-count" id="pct">0%</div><div class="big-count-label" id="prog-label">Preparing...</div><div class="prog-bar-wrap"><div class="prog-bar" id="prog-bar"></div></div><div class="prog-stats"><span class="ok" id="stat-ok">✓ 0 uploaded</span><span id="stat-total">0 total</span><span class="fail" id="stat-fail" style="display:none">✗ 0 failed</span></div><div class="elapsed-row"><span>Elapsed</span><span id="stat-elapsed">0s</span></div><div class="last-file" id="last-file">—</div>< !-- Per-study timing log --><div class="study-log" id="study-log"></div></div><div class="done-banner" id="done-banner" style="display:none"></div></div></div>< !-- Toast --><div id="toast"></div><script>let activeEventSource=null;
 
     // Map study_uid -> { cardIndex, total, done } for per-card progress tracking
-    const studyCardMap = {}
+    const studyCardMap= {}
 
-      ;
+    ;
 
-    document.querySelectorAll('.study-card').forEach((card, i) => {
-      const uid = card.dataset.study;
+    document.querySelectorAll('.study-card').forEach((card, i)=> {
+        const uid=card.dataset.study;
 
-      studyCardMap[uid] = {
-        cardIndex: i
-      }
+        studyCardMap[uid]= {
+          cardIndex: i
+        }
 
         ;
-    });
+      });
 
     // Track per-study file counts for the mini progress bars
-    const studyFileCounts = {}
+    const studyFileCounts= {}
 
-      ;
+    ;
 
-    const studyDoneCounts = {}
+    const studyDoneCounts= {}
 
-      ;
+    ;
 
     // ─── Smooth fake-progress animator ───────────────────────────────
     // Ensures the UI always shows continuous forward movement,
     // even when real server events arrive in bursts or stall.
-    const smoother = {
+    const smoother= {
       displayed: 0,
       // currently displayed percentage (float 0-100)
       realTarget: 0,
@@ -791,96 +829,96 @@
       startTime: 0,
 
       start() {
-        this.displayed = 0;
-        this.realTarget = 0;
-        this.phase = 'preparing';
-        this.uploadStarted = false;
-        this.lastTick = performance.now();
-        this.startTime = performance.now();
-        this.elapsedDisplay = 0;
+        this.displayed=0;
+        this.realTarget=0;
+        this.phase='preparing';
+        this.uploadStarted=false;
+        this.lastTick=performance.now();
+        this.startTime=performance.now();
+        this.elapsedDisplay=0;
         this._tick();
       }
 
       ,
 
       setReal(pct) {
-        this.realTarget = Math.min(pct, 100);
+        this.realTarget=Math.min(pct, 100);
 
-        if (!this.uploadStarted && pct > 0) {
-          this.uploadStarted = true;
-          this.phase = 'uploading';
+        if ( !this.uploadStarted && pct > 0) {
+          this.uploadStarted=true;
+          this.phase='uploading';
         }
       }
 
       ,
 
       finish() {
-        this.phase = 'done';
-        this.realTarget = 100;
+        this.phase='done';
+        this.realTarget=100;
         // Let the tick loop snap to 100 and stop
       }
 
       ,
 
       stop() {
-        this.phase = 'idle';
+        this.phase='idle';
 
         if (this.rafId) {
           cancelAnimationFrame(this.rafId);
-          this.rafId = null;
+          this.rafId=null;
         }
       }
 
       ,
 
       _tick() {
-        const now = performance.now();
-        const dt = Math.min((now - this.lastTick) / 1000, 0.1); // seconds, cap at 100ms
-        this.lastTick = now;
+        const now=performance.now();
+        const dt=Math.min((now - this.lastTick) / 1000, 0.1); // seconds, cap at 100ms
+        this.lastTick=now;
 
-        if (this.phase === 'preparing') {
+        if (this.phase==='preparing') {
           // Slowly creep from 0 → 18% during file pre-load, decelerating
-          const maxPrepare = 18;
-          const remaining = maxPrepare - this.displayed;
+          const maxPrepare=18;
+          const remaining=maxPrepare - this.displayed;
           // Move ~1.5% per second, decelerating as we approach cap
-          const speed = Math.max(0.15, remaining * 0.08);
-          this.displayed = Math.min(this.displayed + speed * dt, maxPrepare);
+          const speed=Math.max(0.15, remaining * 0.08);
+          this.displayed=Math.min(this.displayed + speed * dt, maxPrepare);
 
           // Simulate elapsed time ticking
-          this.elapsedDisplay += dt;
+          this.elapsedDisplay+=dt;
 
         }
 
-        else if (this.phase === 'uploading') {
+        else if (this.phase==='uploading') {
           // Smoothly chase realTarget, but also creep forward on its own
           // so the bar never looks stuck
-          const cap = Math.min(this.realTarget + 5, 95); // never exceed real+5 or 95
-          const remaining = cap - this.displayed;
+          const cap=Math.min(this.realTarget + 5, 95); // never exceed real+5 or 95
+          const remaining=cap - this.displayed;
 
           if (remaining > 0.05) {
             // Adaptive speed: fast when far behind, slow when close to cap
             // Base: catch up ~30% of the gap per second for fast catch-up
             // Plus a small constant creep so it never fully stops
-            const catchUp = remaining * 0.3; // proportional catch-up
-            const creep = 0.4; // constant slow creep (% per second)
-            const speed = Math.max(catchUp, creep);
-            this.displayed = Math.min(this.displayed + speed * dt, cap);
+            const catchUp=remaining * 0.3; // proportional catch-up
+            const creep=0.4; // constant slow creep (% per second)
+            const speed=Math.max(catchUp, creep);
+            this.displayed=Math.min(this.displayed + speed * dt, cap);
           }
 
         }
 
-        else if (this.phase === 'done') {
+        else if (this.phase==='done') {
           // Quickly animate to 100%
-          const remaining = 100 - this.displayed;
+          const remaining=100 - this.displayed;
 
           if (remaining > 0.1) {
-            this.displayed = Math.min(this.displayed + remaining * 4 * dt, 100);
+            this.displayed=Math.min(this.displayed + remaining * 4 * dt, 100);
           }
 
           else {
-            this.displayed = 100;
+            this.displayed=100;
             this._applyToDOM(100);
-            this.phase = 'idle';
+            this.phase='idle';
             return; // stop the loop
           }
         }
@@ -890,27 +928,27 @@
         }
 
         this._applyToDOM(this.displayed);
-        this.rafId = requestAnimationFrame(() => this._tick());
+        this.rafId=requestAnimationFrame(()=> this._tick());
       }
 
       ,
 
       _applyToDOM(val) {
-        const rounded = Math.round(val);
-        document.getElementById('pct').textContent = rounded + '%';
-        document.getElementById('prog-bar').style.width = val.toFixed(1) + '%';
+        const rounded=Math.round(val);
+        document.getElementById('pct').textContent=rounded+'%';
+        document.getElementById('prog-bar').style.width=val.toFixed(1)+'%';
 
         // During preparing phase, update the label with fake elapsed time
-        if (this.phase === 'preparing') {
-          document.getElementById('stat-elapsed').textContent = Math.floor(this.elapsedDisplay) + 's';
+        if (this.phase==='preparing') {
+          document.getElementById('stat-elapsed').textContent=Math.floor(this.elapsedDisplay)+'s';
         }
       }
     }
 
-      ;
+    ;
 
     function startUpload(patient, studyUid, cardIndex) {
-      const params = new URLSearchParams();
+      const params=new URLSearchParams();
 
       if (patient && studyUid) {
         params.set('patient', patient);
@@ -918,204 +956,265 @@
       }
 
       // Disable buttons
-      document.getElementById('btn-upload-all').disabled = true;
+      document.getElementById('btn-upload-all').disabled=true;
 
-      if (cardIndex !== null && cardIndex !== undefined) {
-        document.getElementById('btn-' + cardIndex).disabled = true;
+      if (cardIndex !==null && cardIndex !==undefined) {
+        document.getElementById('btn-' + cardIndex).disabled=true;
         document.getElementById('card-' + cardIndex).classList.add('uploading');
       }
 
       else {
-        document.querySelectorAll('[id^="btn-"]').forEach(b => b.disabled = true);
-        document.querySelectorAll('.study-card').forEach(c => c.classList.add('uploading'));
+        document.querySelectorAll('[id^="btn-"]').forEach(b=> b.disabled=true);
+        document.querySelectorAll('.study-card').forEach(c=> c.classList.add('uploading'));
       }
 
       // Reset overlay
-      document.getElementById('progress-inner').style.display = 'block';
-      document.getElementById('done-banner').style.display = 'none';
-      document.getElementById('pct').textContent = '0%';
-      document.getElementById('prog-label').textContent = 'Preparing...';
-      document.getElementById('prog-bar').style.width = '0%';
-      document.getElementById('stat-ok').textContent = '✓ 0 uploaded';
-      document.getElementById('stat-fail').style.display = 'none';
-      document.getElementById('last-file').textContent = '—';
-      document.getElementById('stat-elapsed').textContent = '0s';
-      document.getElementById('study-log').innerHTML = '';
+      document.getElementById('progress-inner').style.display='block';
+      document.getElementById('done-banner').style.display='none';
+      document.getElementById('pct').textContent='0%';
+      document.getElementById('prog-label').textContent='Preparing...';
+      document.getElementById('prog-bar').style.width='0%';
+      document.getElementById('stat-ok').textContent='✓ 0 uploaded';
+      document.getElementById('stat-fail').style.display='none';
+      document.getElementById('last-file').textContent='—';
+      document.getElementById('stat-elapsed').textContent='0s';
+      document.getElementById('study-log').innerHTML='';
       document.getElementById('progress-overlay').classList.add('active');
 
       // Reset card mini progress bars
-      document.querySelectorAll('.card-progress-wrap').forEach(w => {
-        w.classList.remove('active');
-        w.querySelector('.card-progress-bar').style.width = '0%';
-      });
+      document.querySelectorAll('.card-progress-wrap').forEach(w=> {
+          w.classList.remove('active');
+          w.querySelector('.card-progress-bar').style.width='0%';
+        });
 
       // Start smooth progress animation
       smoother.start();
 
-      const url = '/upload-stream?' + params.toString();
-      activeEventSource = new EventSource(url);
-      let total = 0,
-        done = 0,
-        failed = 0;
+      const url='/upload-stream?'+params.toString();
+      activeEventSource=new EventSource(url);
+      let total=0,
+      done=0,
+      failed=0;
 
-      activeEventSource.onmessage = function (e) {
-        const msg = JSON.parse(e.data);
+      activeEventSource.onmessage=function (e) {
+        const msg=JSON.parse(e.data);
 
-        if (msg.type === 'start') {
-          total = msg.total;
-          document.getElementById('stat-total').textContent = total + ' total';
-          document.getElementById('prog-label').textContent = 'Uploading ' + total + ' files...';
+        if (msg.type==='start') {
+          total=msg.total;
+          document.getElementById('stat-total').textContent=total+' total';
+          document.getElementById('prog-label').textContent='Uploading '+total+' files...';
         }
 
-        if (msg.type === 'progress') {
-          done = msg.done;
-          failed = msg.failed;
-          const pct = Math.round(done / msg.total * 100);
+        if (msg.type==='progress') {
+          done=msg.done;
+          failed=msg.failed;
+          const pct=Math.round(done / msg.total * 100);
 
           // Feed real percentage to the smoother — it will animate toward it
           smoother.setReal(pct);
 
           // Update text labels (not the percentage — smoother handles that)
-          document.getElementById('prog-label').textContent = done + ' / ' + msg.total + ' files';
-          document.getElementById('stat-ok').textContent = '✓ ' + (done - failed) + ' uploaded';
-          document.getElementById('last-file').textContent = msg.file;
-          document.getElementById('stat-elapsed').textContent = msg.elapsed + 's';
+          document.getElementById('prog-label').textContent=done+' / '+msg.total+' files';
+          document.getElementById('stat-ok').textContent='✓ '+(done - failed)+' uploaded';
+          document.getElementById('last-file').textContent=msg.file;
+          document.getElementById('stat-elapsed').textContent=msg.elapsed+'s';
 
           if (failed > 0) {
-            document.getElementById('stat-fail').style.display = 'inline';
-            document.getElementById('stat-fail').textContent = '✗ ' + failed + ' failed';
+            document.getElementById('stat-fail').style.display='inline';
+            document.getElementById('stat-fail').textContent='✗ '+failed+' failed';
           }
 
           // Update per-card mini progress bar
-          const uid = msg.study_uid;
+          const uid=msg.study_uid;
 
           if (uid) {
-            if (!studyFileCounts[uid]) studyFileCounts[uid] = 0;
-            if (!studyDoneCounts[uid]) studyDoneCounts[uid] = 0;
+            if ( !studyFileCounts[uid]) studyFileCounts[uid]=0;
+            if ( !studyDoneCounts[uid]) studyDoneCounts[uid]=0;
             studyDoneCounts[uid]++;
-            const wrap = document.getElementById('cpw-' + uid);
+            const wrap=document.getElementById('cpw-' + uid);
 
             if (wrap) {
               wrap.classList.add('active');
-              const bar = document.getElementById('cpb-' + uid);
-              if (bar) bar.style.width = pct + '%';
+              const bar=document.getElementById('cpb-' + uid);
+              if (bar) bar.style.width=pct+'%';
             }
 
             // Update card status text
-            const entry = studyCardMap[uid];
+            const entry=studyCardMap[uid];
 
-            if (entry !== undefined) {
-              const si = document.getElementById('status-' + entry.cardIndex);
-              if (si) si.textContent = Math.round(smoother.displayed) + '%';
+            if (entry !==undefined) {
+              const si=document.getElementById('status-' + entry.cardIndex);
+              if (si) si.textContent=Math.round(smoother.displayed)+'%';
             }
           }
 
           // Global card status for single-study upload
-          if (cardIndex !== null && cardIndex !== undefined) {
-            document.getElementById('status-' + cardIndex).textContent = Math.round(smoother.displayed) + '%';
+          if (cardIndex !==null && cardIndex !==undefined) {
+            document.getElementById('status-' + cardIndex).textContent=Math.round(smoother.displayed)+'%';
           }
         }
 
-        if (msg.type === 'study_done') {
-          const uid = msg.study_uid;
+        if (msg.type==='study_done') {
+          const uid=msg.study_uid;
           // Snap mini bar to 100%
-          const bar = document.getElementById('cpb-' + uid);
-          if (bar) bar.style.width = '100%';
+          const bar=document.getElementById('cpb-' + uid);
+          if (bar) bar.style.width='100%';
 
           // Show time-taken pill on card
-          const pill = document.getElementById('time-' + uid);
+          const pill=document.getElementById('time-' + uid);
 
           if (pill) {
-            pill.textContent = '⏱ ' + msg.elapsed_str;
+            pill.textContent='⏱ '+msg.elapsed_str;
             pill.classList.add('visible');
           }
 
           // Append to study log inside overlay
-          const log = document.getElementById('study-log');
-          const entry = document.createElement('div');
-          entry.className = 'study-log-entry';
+          const log=document.getElementById('study-log');
+          const entry=document.createElement('div');
+          entry.className='study-log-entry';
 
-          const errBit = msg.failed > 0 ? `<span class="log-err">✗ ${msg.failed} err</span>` : '';
-          entry.innerHTML = `<span class="log-uid">${uid}</span><span class="log-time">⏱ ${msg.elapsed_str}</span>${errBit}`;
+          const errBit=msg.failed>0 ? `<span class="log-err">✗ $ {
+            msg.failed
+          }
+
+          err</span>` : '';
+
+          entry.innerHTML=`<span class="log-uid">$ {
+            uid
+          }
+
+          </span><span class="log-time">⏱ $ {
+            msg.elapsed_str
+          }
+
+          </span>$ {
+            errBit
+          }
+
+          `;
           log.appendChild(entry);
-          log.scrollTop = log.scrollHeight;
+          log.scrollTop=log.scrollHeight;
 
           // Mark card done
-          const cardEntry = studyCardMap[uid];
+          const cardEntry=studyCardMap[uid];
 
-          if (cardEntry !== undefined) {
-            const card = document.getElementById('card-' + cardEntry.cardIndex);
+          if (cardEntry !==undefined) {
+            const card=document.getElementById('card-' + cardEntry.cardIndex);
 
             if (card) {
               card.classList.remove('uploading');
-              card.classList.add(msg.failed === 0 ? 'done-success' : 'done-error');
+              card.classList.add(msg.failed===0 ? 'done-success' : 'done-error');
             }
 
-            const si = document.getElementById('status-' + cardEntry.cardIndex);
-            if (si) si.innerHTML = msg.failed === 0 ? '<span style="color:var(--success)">✓ Done</span>'
-              : '<span style="color:var(--danger)">✗ Error</span>';
+            const si=document.getElementById('status-' + cardEntry.cardIndex);
+            if (si) si.innerHTML=msg.failed===0 ? '<span style="color:var(--success)">✓ Done</span>'
+            : '<span style="color:var(--danger)">✗ Error</span>';
           }
         }
 
-        if (msg.type === 'done') {
+        if (msg.type==='done') {
           activeEventSource.close();
 
           // Tell smoother to animate to 100% smoothly
           smoother.finish();
 
-          const success = msg.failed === 0;
-          const partial = msg.failed > 0 && msg.succeeded > 0;
+          const success=msg.failed===0;
+          const partial=msg.failed>0 && msg.succeeded>0;
 
           // Small delay to let the 100% animation complete before showing banner
-          setTimeout(() => {
-            smoother.stop();
-            document.getElementById('progress-inner').style.display = 'none';
-            const banner = document.getElementById('done-banner');
-            banner.style.display = 'block';
+          setTimeout(()=> {
+              smoother.stop();
+              document.getElementById('progress-inner').style.display='none';
+              const banner=document.getElementById('done-banner');
+              banner.style.display='block';
 
-            const timeStr = msg.elapsed_str || (msg.elapsed + 's');
+              const timeStr=msg.elapsed_str || (msg.elapsed + 's');
 
-            const strategyLabel = msg.strategy ? ` <span style="font-size:10px;opacity:0.7">[${msg.strategy}]</span>` : '';
+              const strategyLabel=msg.strategy ? ` <span style="font-size:10px;opacity:0.7" >[$ {
+                msg.strategy
+              }
 
-            if (success) {
-              banner.innerHTML = `<div class="done-icon">✅</div><div class="done-title success">Upload Complete</div><div class="done-sub">${msg.succeeded} file${msg.succeeded !== 1 ? 's' : ''} sent to Orthanc${strategyLabel}</div><div class="done-time">⏱ Total time: ${timeStr}</div><button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>`;
-              showToast('success', '✓ ' + msg.succeeded + ' files uploaded in ' + timeStr);
+              ]</span>` : '';
+
+              if (success) {
+                banner.innerHTML=` <div class="done-icon" >✅</div> <div class="done-title success" >Upload Complete</div> <div class="done-sub" >$ {
+                  msg.succeeded
+                }
+
+                file$ {
+                  msg.succeeded !==1 ? 's' : ''
+                }
+
+                sent to Orthanc$ {
+                  strategyLabel
+                }
+
+                </div> <div class="done-time" >⏱ Total time: $ {
+                  timeStr
+                }
+
+                </div> <button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;" >Close</button> `;
+                showToast('success', '✓ ' + msg.succeeded + ' files uploaded in ' + timeStr);
+              }
+
+              else if (partial) {
+                banner.innerHTML=` <div class="done-icon" >⚠️</div> <div class="done-title partial" >Partial Upload</div> <div class="done-sub" >$ {
+                  msg.succeeded
+                }
+
+                succeeded, $ {
+                  msg.failed
+                }
+
+                failed$ {
+                  strategyLabel
+                }
+
+                </div> <div class="done-time" >⏱ Total time: $ {
+                  timeStr
+                }
+
+                </div> <button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;" >Close</button> `;
+                showToast('error', '⚠ ' + msg.failed + ' files failed to upload');
+              }
+
+              else {
+                banner.innerHTML=` <div class="done-icon" >❌</div> <div class="done-title" style="color:var(--danger)" >Upload Failed</div> <div class="done-sub" >All $ {
+                  msg.total
+                }
+
+                files failed. Check Orthanc connection.</div> <div class="done-time" >⏱ Total time: $ {
+                  timeStr
+                }
+
+                </div> <button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;" >Close</button> `;
+                showToast('error', '✗ Upload failed — check Orthanc connection');
+              }
+
+              // Re-enable all buttons
+              document.getElementById('btn-upload-all').disabled=false;
+              document.querySelectorAll('[id^="btn-"]').forEach(b=> b.disabled=false);
             }
-
-            else if (partial) {
-              banner.innerHTML = `<div class="done-icon">⚠️</div><div class="done-title partial">Partial Upload</div><div class="done-sub">${msg.succeeded} succeeded, ${msg.failed} failed${strategyLabel}</div><div class="done-time">⏱ Total time: ${timeStr}</div><button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>`;
-              showToast('error', '⚠ ' + msg.failed + ' files failed to upload');
-            }
-
-            else {
-              banner.innerHTML = `<div class="done-icon">❌</div><div class="done-title" style="color:var(--danger)">Upload Failed</div><div class="done-sub">All ${msg.total} files failed. Check Orthanc connection.</div><div class="done-time">⏱ Total time: ${timeStr}</div><button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>`;
-              showToast('error', '✗ Upload failed — check Orthanc connection');
-            }
-
-            // Re-enable all buttons
-            document.getElementById('btn-upload-all').disabled = false;
-            document.querySelectorAll('[id^="btn-"]').forEach(b => b.disabled = false);
-          }
 
             , 600); // wait for 100% animation to complete
         }
       }
 
-        ;
+      ;
 
-      activeEventSource.onerror = function () {
+      activeEventSource.onerror=function () {
         activeEventSource.close();
         smoother.stop();
-        document.getElementById('progress-inner').style.display = 'none';
-        const banner = document.getElementById('done-banner');
-        banner.style.display = 'block';
-        banner.innerHTML = ` <div class="done-icon">❌</div><div class="done-title" style="color:var(--danger)">Connection Error</div><div class="done-sub">Lost connection to server during upload.</div><button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>`;
+        document.getElementById('progress-inner').style.display='none';
+        const banner=document.getElementById('done-banner');
+        banner.style.display='block';
+        banner.innerHTML=` <div class="done-icon">❌</div><div class="done-title" style="color:var(--danger)">Connection Error</div><div class="done-sub">Lost connection to server during upload.</div><button class="btn btn-study" onclick="closeOverlay()" style="margin:0 auto;">Close</button>`;
         showToast('error', '✗ Connection lost during upload');
-        document.getElementById('btn-upload-all').disabled = false;
-        document.querySelectorAll('[id^="btn-"]').forEach(b => b.disabled = false);
+        document.getElementById('btn-upload-all').disabled=false;
+        document.querySelectorAll('[id^="btn-"]').forEach(b=> b.disabled=false);
       }
 
-        ;
+      ;
     }
 
     function closeOverlay() {
@@ -1124,64 +1223,72 @@
     }
 
     function showToast(type, msg) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.className = type;
-      setTimeout(() => t.classList.add('show'), 10);
-      setTimeout(() => t.classList.remove('show'), 4000);
+      const t=document.getElementById('toast');
+      t.textContent=msg;
+      t.className=type;
+      setTimeout(()=> t.classList.add('show'), 10);
+      setTimeout(()=> t.classList.remove('show'), 4000);
     }
 
     // Close overlay on backdrop click
     document.getElementById('progress-overlay').addEventListener('click', function (e) {
-      if (e.target === this) closeOverlay();
-    });
+        if (e.target===this) closeOverlay();
+      });
 
     // ── Mirror-status banner polling ─────────────────────────────────
     async function pollMirrorStatus() {
       try {
-        const resp = await fetch('/mirror-status');
-        const data = await resp.json();
-        const banner = document.getElementById('mirror-banner');
-        if (!banner) return;
+        const resp=await fetch('/mirror-status');
+        const data=await resp.json();
+        const banner=document.getElementById('mirror-banner');
+        if ( !banner) return;
 
-        if (!data.is_mirror) {
+        if ( !data.is_mirror) {
 
           // STREAM strategies — warn user once
-          if (data.strategy === 'STREAM_LOW_MEM') {
-            banner.innerHTML = '⚠️ Low memory mode — upload will stream directly from CD (~2–3 min)';
+          if (data.strategy==='STREAM_LOW_MEM') {
+            banner.innerHTML='⚠️ Low memory mode — upload will stream directly from CD (~2–3 min)';
           }
 
-          else if (data.strategy === 'STREAM_FROM_CD') {
-            banner.innerHTML = '⚠️ No disk space for mirror — streaming directly from CD. Upload starts immediately but may take ~2–3 min.';
+          else if (data.strategy==='STREAM_FROM_CD') {
+            banner.innerHTML='⚠️ No disk space for mirror — streaming directly from CD. Upload starts immediately but may take ~2–3 min.';
           }
 
           else {
             return; // unknown strategy, hide
           }
 
-          banner.className = 'mirror-banner visible banner-warn';
+          banner.className='mirror-banner visible banner-warn';
           return; // stop polling
         }
 
         if (data.ready && !data.failed) {
-          const label = data.strategy === 'MIRROR_SSD' ? 'SSD' : 'hard disk';
+          const label=data.strategy==='MIRROR_SSD' ? 'SSD': 'hard disk';
 
-          banner.innerHTML = `✅ CD copied to ${label} — upload will be fast!`;
-          banner.className = 'mirror-banner visible banner-ready';
+          banner.innerHTML=`✅ CD copied to $ {
+            label
+          }
+
+          — upload will be fast !`;
+          banner.className='mirror-banner visible banner-ready';
           return; // stop polling
         }
 
         if (data.failed) {
-          banner.innerHTML = '⚠️ Mirror copy had errors — falling back to direct CD reads.';
-          banner.className = 'mirror-banner visible banner-warn';
+          banner.innerHTML='⚠️ Mirror copy had errors — falling back to direct CD reads.';
+          banner.className='mirror-banner visible banner-warn';
           return;
         }
 
         // Mirror still in progress — keep polling
-        const label = data.strategy === 'MIRROR_SSD' ? 'SSD' : 'hard disk';
+        const label=data.strategy==='MIRROR_SSD' ? 'SSD' : 'hard disk';
 
-        banner.innerHTML = `⟳ Copying CD to ${label} in background… Upload starts instantly when ready.`;
-        banner.className = 'mirror-banner visible banner-progress';
+        banner.innerHTML=`⟳ Copying CD to $ {
+          label
+        }
+
+        in background… Upload starts instantly when ready.`;
+        banner.className='mirror-banner visible banner-progress';
         setTimeout(pollMirrorStatus, 2000);
       }
 
@@ -1191,7 +1298,4 @@
     }
 
     pollMirrorStatus();
-  </script>
-</body>
-
-</html>
+    </script></body></html>
