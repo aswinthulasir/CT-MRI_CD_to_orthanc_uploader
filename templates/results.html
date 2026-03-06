@@ -588,6 +588,11 @@
       <div class="tag">Scan Results</div>
       <h1>Found <span>{{ studies|length }}</span> {{ 'Study' if studies|length == 1 else 'Studies' }}</h1>
       <div class="header-meta">Drive: <strong>{{ drive }}</strong></div>
+      <div class="header-meta">
+        Method: <strong>{{ scan_method }}</strong>
+        {% if dicomdir %}&nbsp;·&nbsp;DICOMDIR: <strong style="font-size:10px;word-break:break-all;">{{ dicomdir
+          }}</strong>{% endif %}
+      </div>
     </div>
     <a href="/" class="btn btn-back">← Back</a>
   </header>
@@ -614,6 +619,15 @@
           {% if s.date %}
           <span class="meta-pill">📅 {{ s.date[:4] + '-' + s.date[4:6] + '-' + s.date[6:] if s.date|length == 8 else
             s.date }}</span>
+          {% endif %}
+          {% if s.patient_id %}
+          <span class="meta-pill">ID: {{ s.patient_id }}</span>
+          {% endif %}
+          {% if s.patient_sex %}
+          <span class="meta-pill">Sex: {{ s.patient_sex }}</span>
+          {% endif %}
+          {% if s.patient_age %}
+          <span class="meta-pill">Age: {{ s.patient_age }}</span>
           {% endif %}
           <span class="meta-pill">{{ s.count }} image{{ 's' if s.count != 1 else '' }}</span>
           <span class="meta-pill" style="word-break:break-all;font-size:9px;">{{ s.study_uid[:24] }}…</span>

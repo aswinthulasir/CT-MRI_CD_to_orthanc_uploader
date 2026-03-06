@@ -1,20 +1,20 @@
 """
-DICOM CD Importer — Optimised for 1000+ slices in <60 s on localhost
-====================================================================
+DICOM CD Importer — DICOMDIR-first, no temp-copy pipeline
+==========================================================
 
 Pipeline:
   1. Detect CD/removable drives.
-  2. FAST COPY: Mirror the entire CD to a local temp folder using parallel
-     threads (eliminates slow optical-drive random reads for every subsequent
-     step).
-  3. Scan DICOM headers from the fast local copy.
-  4. Upload to Orthanc in batched ZIPs from local copy.
-  5. Delete the temp folder once upload is finished.
+  2. FAST SCAN: Search for DICOMDIR at the root or one level deep.
+     If found, parse it directly to extract all file paths + metadata
+     without touching any individual DICOM file.
+  3. If no DICOMDIR found, fall back to parallel DICOM header scan.
+  4. Upload to Orthanc in batched ZIPs directly from the CD/drive.
 
-Key speed improvements:
-  - Temp-folder mirror removes optical-drive latency from scan + upload.
-  - Parallel mirror copy with MIRROR_WORKERS threads.
-  - only 5 DICOM tags decoded (fast header scan).
+Key speed improvements over the old mirror-copy pipeline:
+  - No temp folder creation — files are read directly from the source.
+  - DICOMDIR parse is near-instant (single small file read).
+  - Full patient metadata (Name, ID, Age, Sex) available without
+    scanning any individual DICOM file.
   - Batched ZIP uploads (BATCH_SIZE files per POST).
   - Async semaphore-controlled concurrent uploads (MAX_UPLOAD_WORKERS).
   - httpx connection pool explicitly sized.
@@ -24,8 +24,6 @@ import io
 import json
 import os
 import platform
-import shutil
-import tempfile
 import time
 import zipfile
 import asyncio
@@ -50,18 +48,14 @@ ORTHANC_PASS = "password"
 MAX_UPLOAD_WORKERS = 32   # concurrent async upload coroutines
 BATCH_SIZE         = 50   # DICOM files per ZIP POST
 PRELOAD_WORKERS    = 16   # threads for parallel disk reads
-MIRROR_WORKERS     = 24   # threads for parallel mirror copy from CD
-COPY_BUFFER_SIZE   = 1024 * 1024  # 1 MB buffer for file copy
 
-# Base temp directory for mirrored CD files
-TEMP_BASE_DIR = os.environ.get(
-    "DICOM_TEMP_DIR",
-    os.path.join(tempfile.gettempdir(), "dicom_cd_temp"),
-)
-
-# DICOM tags we actually need (avoids decoding the whole header)
+# DICOM tags we actually need for fallback scanning (avoids decoding whole header)
 _DICOM_TAGS = [
     0x00100010,  # PatientName
+    0x00100020,  # PatientID
+    0x00100030,  # PatientBirthDate
+    0x00100040,  # PatientSex
+    0x00101010,  # PatientAge
     0x0020000D,  # StudyInstanceUID
     0x00081030,  # StudyDescription
     0x00080020,  # StudyDate
@@ -72,9 +66,6 @@ app      = FastAPI()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 scan_cache: dict = {}
-
-# Stores the current temp directory path so we can clean up after upload
-_active_temp_dir: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -133,125 +124,202 @@ def detect_cd_drives() -> list:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Fast mirror: copy all files from CD to local temp folder
+# Step 2a — DICOMDIR discovery
 # ---------------------------------------------------------------------------
 
-def _collect_all_file_paths(source_dir: str) -> list[str]:
-    """Walk the source directory and return a flat list of all file paths."""
-    paths = []
-    for root, _dirs, files in os.walk(source_dir):
-        for fname in files:
-            paths.append(os.path.join(root, fname))
-    return paths
-
-
-def _copy_single_file(args: tuple[str, str, str]) -> tuple[str, str | None]:
+def find_dicomdir(drive_path: str) -> str | None:
     """
-    Copy one file from the CD to the temp folder, preserving the relative
-    directory structure.  Returns (dest_path, error_or_None).
+    Search for a DICOMDIR file at the drive root or one level deep.
+
+    Priority:
+      1. <drive_path>/DICOMDIR
+      2. <drive_path>/DICOMDIR.  (some CDs omit extension separator)
+      3. <drive_path>/<subdir>/DICOMDIR  for each immediate subdirectory
+    Returns the absolute path if found, else None.
     """
-    src_path, source_root, dest_root = args
+    # Case-insensitive candidates at root
+    candidates = ["DICOMDIR", "dicomdir", "Dicomdir"]
+    for name in candidates:
+        p = os.path.join(drive_path, name)
+        if os.path.isfile(p):
+            print(f"[DICOMDIR] Found at root: {p}")
+            return p
+
+    # One level deep
     try:
-        rel = os.path.relpath(src_path, source_root)
-        dest_path = os.path.join(dest_root, rel)
-        dest_dir = os.path.dirname(dest_path)
-        os.makedirs(dest_dir, exist_ok=True)
-        # Use a large buffer to minimise CD read syscalls
-        with open(src_path, "rb", buffering=COPY_BUFFER_SIZE) as fin, \
-             open(dest_path, "wb", buffering=COPY_BUFFER_SIZE) as fout:
-            shutil.copyfileobj(fin, fout, length=COPY_BUFFER_SIZE)
-        return (dest_path, None)
-    except Exception as exc:
-        return ("", str(exc))
+        for entry in os.scandir(drive_path):
+            if entry.is_dir():
+                for name in candidates:
+                    p = os.path.join(entry.path, name)
+                    if os.path.isfile(p):
+                        print(f"[DICOMDIR] Found in subdirectory: {p}")
+                        return p
+    except PermissionError:
+        pass
+
+    print(f"[DICOMDIR] Not found under: {drive_path}")
+    return None
 
 
-def mirror_cd_to_temp(drive_path: str) -> tuple[str, int, int, float]:
+# ---------------------------------------------------------------------------
+# Step 2b — Parse DICOMDIR into studies dict (fast, single-file read)
+# ---------------------------------------------------------------------------
+
+def _norm_str(val) -> str:
+    """Safely convert a DICOM attribute value to a clean string."""
+    s = str(val).strip()
+    return s if s else ""
+
+
+def scan_from_dicomdir(dicomdir_path: str) -> dict:
     """
-    Copy every file from *drive_path* into a local temp directory using
-    parallel threads.
+    Parse a DICOMDIR file and return the same studies dict structure as
+    scan_drive_fallback(), but without touching any individual DICOM instance file.
 
-    Returns
-    -------
-    (temp_dir, total_files, failed_count, elapsed_seconds)
+    Returns:
+        { patient_str: { study_uid: [ file_info_dict, ... ], ... }, ... }
+
+    Each file_info_dict contains:
+        path, patient, patient_id, patient_sex, patient_age,
+        study_uid, desc, date, modality
     """
-    global _active_temp_dir
-
-    # Clean up any previous temp dir
-    cleanup_temp_dir()
-
-    # Create a fresh temp directory
-    os.makedirs(TEMP_BASE_DIR, exist_ok=True)
-    temp_dir = tempfile.mkdtemp(prefix="cd_", dir=TEMP_BASE_DIR)
-    _active_temp_dir = temp_dir
-
-    print(f"[MIRROR] Starting copy from CD '{drive_path}' → temp '{temp_dir}'")
+    # IMPORTANT: use absolute path so dirname is never empty string
+    dicomdir_path = os.path.abspath(dicomdir_path)
+    dicomdir_dir  = os.path.dirname(dicomdir_path)
     t0 = time.monotonic()
+    print(f"[DICOMDIR] Parsing: {dicomdir_path}")
+    print(f"[DICOMDIR] File-set root (base for file paths): {dicomdir_dir}")
 
-    # Enumerate all files on the CD
-    all_src = _collect_all_file_paths(drive_path)
-    total = len(all_src)
-    print(f"[MIRROR] Found {total} files on CD. Copying with {MIRROR_WORKERS} threads …")
+    dicomdir = pydicom.dcmread(dicomdir_path)
 
-    # Parallel copy
-    copy_args = [(p, drive_path, temp_dir) for p in all_src]
-    failed = 0
-    copied = 0
-    with ThreadPoolExecutor(max_workers=MIRROR_WORKERS) as pool:
-        for dest, err in pool.map(_copy_single_file, copy_args):
-            if err:
-                failed += 1
-                print(f"[MIRROR]   ✗ copy failed: {err}")
+    if not hasattr(dicomdir, "DirectoryRecordSequence"):
+        print("[DICOMDIR] No DirectoryRecordSequence — cannot parse.")
+        return {}
+
+    studies: dict = defaultdict(lambda: defaultdict(list))
+
+    # State carried through the flat record list
+    current_patient     = "Unknown"
+    current_patient_id  = ""
+    current_patient_sex = ""
+    current_patient_age = ""
+    current_study_uid   = "Unknown"
+    current_desc        = ""
+    current_date        = ""
+    current_modality    = ""
+
+    image_count   = 0
+    patient_count = 0
+    study_count   = 0
+    first_path_shown = False
+
+    for record in dicomdir.DirectoryRecordSequence:
+        rtype = _norm_str(getattr(record, "DirectoryRecordType", ""))
+
+        if rtype == "PATIENT":
+            current_patient     = _norm_str(getattr(record, "PatientName",  "Unknown")) or "Unknown"
+            current_patient_id  = _norm_str(getattr(record, "PatientID",    ""))
+            current_patient_sex = _norm_str(getattr(record, "PatientSex",   ""))
+            current_patient_age = _norm_str(getattr(record, "PatientAge",   ""))
+            patient_count += 1
+
+        elif rtype == "STUDY":
+            current_study_uid = _norm_str(getattr(record, "StudyInstanceUID", "Unknown")) or "Unknown"
+            current_desc      = _norm_str(getattr(record, "StudyDescription", ""))
+            current_date      = _norm_str(getattr(record, "StudyDate",        ""))
+            study_count += 1
+
+        elif rtype == "SERIES":
+            # Modality is typically on the SERIES record
+            current_modality = _norm_str(getattr(record, "Modality", ""))
+
+        elif rtype == "IMAGE":
+            ref_file_id = getattr(record, "ReferencedFileID", None)
+            if ref_file_id is None:
+                continue
+
+            # ReferencedFileID may be:
+            #   - A pydicom MultiValue / list: ['A', 'Z01']
+            #   - A plain string with backslash separators: 'A\\Z01'
+            #   - A single string with no separator: 'A/Z01'
+            if hasattr(ref_file_id, '__iter__') and not isinstance(ref_file_id, str):
+                # list / MultiValue — each element is one path component
+                parts = [str(p).strip() for p in ref_file_id if str(p).strip()]
             else:
-                copied += 1
-                # Progress every 100 files
-                if copied % 100 == 0:
-                    print(f"[MIRROR]   copied {copied}/{total} files …")
+                raw = str(ref_file_id).strip()
+                # Try backslash first (DICOM standard separator on ISO 9660)
+                if "\\" in raw:
+                    parts = [p for p in raw.split("\\") if p]
+                elif "/" in raw:
+                    parts = [p for p in raw.split("/") if p]
+                else:
+                    parts = [raw]
+
+            if not parts:
+                continue
+
+            file_path = os.path.join(dicomdir_dir, *parts)
+
+            # Show the first constructed path so we can spot issues immediately
+            if not first_path_shown:
+                first_path_shown = True
+                exists = os.path.isfile(file_path)
+                print(f"[DICOMDIR] Sample path: {file_path!r}  exists={exists}")
+                if not exists:
+                    print(f"[DICOMDIR] WARNING: first file not found — check path construction!")
+                    print(f"[DICOMDIR]   dicomdir_dir={dicomdir_dir!r}  parts={parts}")
+
+            studies[current_patient][current_study_uid].append({
+                "path":        file_path,
+                "patient":     current_patient,
+                "patient_id":  current_patient_id,
+                "patient_sex": current_patient_sex,
+                "patient_age": current_patient_age,
+                "study_uid":   current_study_uid,
+                "desc":        current_desc,
+                "date":        current_date,
+                "modality":    current_modality,
+            })
+            image_count += 1
 
     elapsed = time.monotonic() - t0
-    print(f"[MIRROR] ✓ Copy complete: {copied} files in {_fmt_duration(elapsed)} "
-          f"({failed} failed)")
-    return (temp_dir, total, failed, elapsed)
+    print(
+        f"[DICOMDIR] ✓ Parsed in {_fmt_duration(elapsed)}: "
+        f"{patient_count} patients, {study_count} studies, {image_count} images"
+    )
+    return {p: dict(s) for p, s in studies.items()}
 
-
-def cleanup_temp_dir():
-    """Remove the active temp directory and all its contents."""
-    global _active_temp_dir
-    if _active_temp_dir and os.path.isdir(_active_temp_dir):
-        print(f"[CLEANUP] Deleting temp folder: {_active_temp_dir}")
-        try:
-            shutil.rmtree(_active_temp_dir, ignore_errors=True)
-            print(f"[CLEANUP] ✓ Temp folder deleted successfully")
-        except Exception as exc:
-            print(f"[CLEANUP] ✗ Error deleting temp folder: {exc}")
-        _active_temp_dir = None
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — Fast header scan (reads from local temp folder now)
+# Step 2c — Fallback: parallel DICOM header scan (used when no DICOMDIR)
 # ---------------------------------------------------------------------------
 
 def _read_dicom_header(fpath: str) -> dict | None:
-    """Read only the 5 tags we need — 3-5× faster than full header decode."""
+    """Read only the tags we need — faster than full header decode."""
     try:
         ds = pydicom.dcmread(fpath, specific_tags=_DICOM_TAGS)
         return {
-            "path":      fpath,
-            "patient":   str(getattr(ds, "PatientName",      "Unknown")),
-            "study_uid": str(getattr(ds, "StudyInstanceUID",  "Unknown")),
-            "desc":      str(getattr(ds, "StudyDescription",  "")),
-            "date":      str(getattr(ds, "StudyDate",         "")),
-            "modality":  str(getattr(ds, "Modality",          "")),
+            "path":        fpath,
+            "patient":     _norm_str(getattr(ds, "PatientName",      "Unknown")) or "Unknown",
+            "patient_id":  _norm_str(getattr(ds, "PatientID",        "")),
+            "patient_sex": _norm_str(getattr(ds, "PatientSex",       "")),
+            "patient_age": _norm_str(getattr(ds, "PatientAge",       "")),
+            "study_uid":   _norm_str(getattr(ds, "StudyInstanceUID", "Unknown")) or "Unknown",
+            "desc":        _norm_str(getattr(ds, "StudyDescription", "")),
+            "date":        _norm_str(getattr(ds, "StudyDate",        "")),
+            "modality":    _norm_str(getattr(ds, "Modality",         "")),
         }
     except Exception:
         return None
 
 
-def scan_drive(drive_path: str) -> dict:
+def scan_drive_fallback(drive_path: str) -> dict:
     """
-    Scan directory for DICOM headers.
-    Now reads from the local temp copy for maximum speed.
+    Fallback: walk the entire drive and scan DICOM headers in parallel.
+    Used only when no DICOMDIR is present.
     """
-    print(f"[SCAN] Walking directory: {drive_path}")
+    print(f"[SCAN] Fallback walk of: {drive_path}")
     t0 = time.monotonic()
 
     all_paths = [
@@ -259,12 +327,12 @@ def scan_drive(drive_path: str) -> dict:
         for root, _dirs, files in os.walk(drive_path)
         for fname in files
     ]
-    print(f"[SCAN] Found {len(all_paths)} files. Scanning DICOM headers with "
+    print(f"[SCAN] Found {len(all_paths)} files. Scanning headers with "
           f"{PRELOAD_WORKERS} threads …")
 
     studies: dict = defaultdict(lambda: defaultdict(list))
     scanned = 0
-    valid = 0
+    valid   = 0
     with ThreadPoolExecutor(max_workers=PRELOAD_WORKERS) as pool:
         for result in pool.map(_read_dicom_header, all_paths):
             scanned += 1
@@ -276,14 +344,14 @@ def scan_drive(drive_path: str) -> dict:
 
     elapsed = time.monotonic() - t0
     num_patients = len(studies)
-    num_studies = sum(len(s) for s in studies.values())
-    print(f"[SCAN] ✓ Scan complete in {_fmt_duration(elapsed)}: "
+    num_studies  = sum(len(s) for s in studies.values())
+    print(f"[SCAN] ✓ Done in {_fmt_duration(elapsed)}: "
           f"{valid} DICOM files, {num_patients} patients, {num_studies} studies")
     return {p: dict(s) for p, s in studies.items()}
 
 
 # ---------------------------------------------------------------------------
-# Step 4a — ZIP buffer assembly
+# Step 3a — ZIP buffer assembly
 # ---------------------------------------------------------------------------
 
 def _make_zip(batch: list[dict]) -> bytes:
@@ -298,7 +366,7 @@ def _make_zip(batch: list[dict]) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Step 4b — Preload files into memory (fast from local temp folder)
+# Step 3b — Preload files into memory (reads directly from source drive)
 # ---------------------------------------------------------------------------
 
 def _load_file(info: dict) -> dict:
@@ -306,10 +374,19 @@ def _load_file(info: dict) -> dict:
         with open(info["path"], "rb") as fh:
             return {**info, "data": fh.read()}
     except Exception as exc:
+        # Print first few errors so path problems are immediately visible
+        _load_file._err_count = getattr(_load_file, "_err_count", 0) + 1
+        if _load_file._err_count <= 5:
+            print(f"[PRELOAD]   ✗ Cannot read {info['path']!r}: {exc}")
         return {**info, "data": None, "load_error": str(exc)}
 
 
+_load_file._err_count = 0  # reset on module load
+
+
+
 def preload_files(files: list) -> list:
+    _load_file._err_count = 0  # reset per-run so errors always print
     print(f"[PRELOAD] Loading {len(files)} files into memory with "
           f"{PRELOAD_WORKERS} threads …")
     t0 = time.monotonic()
@@ -317,12 +394,14 @@ def preload_files(files: list) -> list:
         result = list(pool.map(_load_file, files))
     elapsed = time.monotonic() - t0
     ok = sum(1 for r in result if r.get("data"))
-    print(f"[PRELOAD] ✓ Loaded {ok}/{len(files)} files in {_fmt_duration(elapsed)}")
+    failed_count = len(files) - ok
+    print(f"[PRELOAD] ✓ Loaded {ok}/{len(files)} files in {_fmt_duration(elapsed)}"
+          + (f" ({failed_count} FAILED)" if failed_count else ""))
     return result
 
 
 # ---------------------------------------------------------------------------
-# Step 4c — Upload helpers
+# Step 3c — Upload helpers
 # ---------------------------------------------------------------------------
 
 async def _upload_batch(batch: list[dict], client: httpx.AsyncClient) -> list[dict]:
@@ -374,11 +453,11 @@ def collect_files(patient, study) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Step 4d — SSE upload stream
+# Step 3d — SSE upload stream
 # ---------------------------------------------------------------------------
 
 async def upload_stream(files: list):
-    """SSE generator for file upload with temp cleanup on completion."""
+    """SSE generator for file upload."""
     total      = len(files)
     done_count = 0
     failed     = 0
@@ -394,7 +473,7 @@ async def upload_stream(files: list):
     for f in files:
         study_totals[f.get("study_uid", "__unknown__")] += 1
 
-    # Preload files from temp folder into memory
+    # Preload files directly from source (CD/drive) into memory
     yield f"data: {json.dumps({'type': 'progress', 'done': 0, 'total': total, 'failed': 0, 'file': 'Pre-loading files into memory…', 'ok': True, 'elapsed': 0.0, 'study_uid': ''})}\n\n"
     loaded = await asyncio.get_event_loop().run_in_executor(None, preload_files, files)
 
@@ -448,10 +527,6 @@ async def upload_stream(files: list):
     print(f"[UPLOAD] ✓ Upload complete: {total - failed} succeeded, "
           f"{failed} failed in {_fmt_duration(total_elapsed)}")
 
-    # --- Step 5: Cleanup temp folder after upload ---
-    print(f"[UPLOAD] Cleaning up temp files …")
-    await asyncio.get_event_loop().run_in_executor(None, cleanup_temp_dir)
-
     yield (
         f"data: {json.dumps({'type': 'done', 'total': total, 'succeeded': total-failed, 'failed': failed, 'elapsed': round(total_elapsed, 1), 'elapsed_str': _fmt_duration(total_elapsed)})}\n\n"
     )
@@ -472,21 +547,25 @@ def home(request: Request):
 async def scan(request: Request, drive: str = Form(...)):
     loop = asyncio.get_event_loop()
 
-    # --- Step 2: Mirror CD to temp folder ---
     print(f"\n{'='*60}")
     print(f"[PIPELINE] Starting DICOM import pipeline for drive: {drive}")
     print(f"{'='*60}")
-
     t_pipeline = time.monotonic()
 
-    print(f"\n[PIPELINE] Step 1/3 — Copying files from CD to local temp folder …")
-    temp_dir, total_files, copy_failed, copy_time = await loop.run_in_executor(
-        None, mirror_cd_to_temp, drive
-    )
+    # --- Step 1: Search for DICOMDIR ---
+    print(f"\n[PIPELINE] Step 1/2 — Searching for DICOMDIR …")
+    dicomdir_path = await loop.run_in_executor(None, find_dicomdir, drive)
 
-    # --- Step 3: Scan DICOM headers from temp folder (fast local reads) ---
-    print(f"\n[PIPELINE] Step 2/3 — Scanning DICOM headers from temp folder …")
-    studies_raw = await loop.run_in_executor(None, scan_drive, temp_dir)
+    if dicomdir_path:
+        # --- Step 2a: Parse DICOMDIR (fast, single file) ---
+        print(f"\n[PIPELINE] Step 2/2 — Parsing DICOMDIR …")
+        studies_raw = await loop.run_in_executor(None, scan_from_dicomdir, dicomdir_path)
+        scan_method = "DICOMDIR"
+    else:
+        # --- Step 2b: Fallback — parallel header scan ---
+        print(f"\n[PIPELINE] Step 2/2 — No DICOMDIR found. Falling back to full scan …")
+        studies_raw = await loop.run_in_executor(None, scan_drive_fallback, drive)
+        scan_method = "Full Scan"
 
     scan_cache.clear()
     scan_cache.update(studies_raw)
@@ -495,31 +574,45 @@ async def scan(request: Request, drive: str = Form(...)):
     total_dicoms = sum(
         len(fl) for stds in studies_raw.values() for fl in stds.values()
     )
-    print(f"\n[PIPELINE] Steps 1-2 done in {_fmt_duration(pipeline_elapsed)}: "
-          f"{total_files} files copied, {total_dicoms} DICOM files found")
-    print(f"[PIPELINE] Step 3/3 — Upload will begin when user confirms.\n")
+    print(
+        f"\n[PIPELINE] Done in {_fmt_duration(pipeline_elapsed)}: "
+        f"{total_dicoms} DICOM files, method={scan_method}"
+    )
+    print(f"[PIPELINE] Upload will begin when user confirms.\n")
 
+    # Build flat study list for the template
     flat = []
     for patient, studies_dict in studies_raw.items():
         for uid, file_list in studies_dict.items():
             first = file_list[0] if file_list else {}
             flat.append({
-                "patient":   patient,
-                "study_uid": uid,
-                "desc":      first.get("desc", ""),
-                "date":      first.get("date", ""),
-                "modality":  first.get("modality", ""),
-                "count":     len(file_list),
+                "patient":     patient,
+                "patient_id":  first.get("patient_id",  ""),
+                "patient_sex": first.get("patient_sex", ""),
+                "patient_age": first.get("patient_age", ""),
+                "study_uid":   uid,
+                "desc":        first.get("desc",     ""),
+                "date":        first.get("date",     ""),
+                "modality":    first.get("modality", ""),
+                "count":       len(file_list),
             })
+
     return templates.TemplateResponse(
-        "results.html", {"request": request, "studies": flat, "drive": drive}
+        "results.html",
+        {
+            "request":     request,
+            "studies":     flat,
+            "drive":       drive,
+            "scan_method": scan_method,
+            "dicomdir":    dicomdir_path or "",
+        },
     )
 
 
 @app.get("/upload-stream")
 async def upload_stream_route(patient: str = "", study: str = ""):
     files = collect_files(patient or None, study or None)
-    print(f"\n[PIPELINE] Step 3/3 — Starting upload of {len(files)} files to Orthanc")
+    print(f"\n[PIPELINE] Starting upload of {len(files)} files to Orthanc")
     return StreamingResponse(
         upload_stream(files),
         media_type="text/event-stream",
