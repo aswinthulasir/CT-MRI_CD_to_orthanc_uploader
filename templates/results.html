@@ -143,7 +143,7 @@
       font-size: 13px;
     }
 
-    .btn-upload-all:hover {
+    .btn-upload-all:hover:not(:disabled) {
       background: #33ddff;
       box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
       transform: translateY(-1px);
@@ -163,7 +163,7 @@
       font-size: 12px;
     }
 
-    .btn-study:hover {
+    .btn-study:hover:not(:disabled) {
       border-color: var(--accent);
       background: var(--accent-dim);
     }
@@ -171,6 +171,125 @@
     .btn-study:disabled {
       opacity: 0.4;
       cursor: not-allowed;
+    }
+
+    /* ── Mirror-pending: shimmer + locked state ─────────────── */
+    .mirror-pending .btn-upload-all,
+    .mirror-pending .btn-study {
+      position: relative;
+      overflow: hidden;
+      pointer-events: none;
+      opacity: 0.55;
+      cursor: not-allowed;
+      filter: saturate(0.3);
+      transition: opacity 0.6s ease, filter 0.6s ease, box-shadow 0.6s ease, transform 0.3s ease;
+    }
+
+    /* Animated shimmer sweep across locked buttons */
+    .mirror-pending .btn-upload-all::after,
+    .mirror-pending .btn-study::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(105deg,
+          transparent 30%,
+          rgba(255, 255, 255, 0.12) 45%,
+          rgba(255, 255, 255, 0.18) 50%,
+          rgba(255, 255, 255, 0.12) 55%,
+          transparent 70%);
+      background-size: 250% 100%;
+      animation: shimmer 2.4s ease-in-out infinite;
+      border-radius: inherit;
+      pointer-events: none;
+    }
+
+    @keyframes shimmer {
+      0% {
+        background-position: 200% 0;
+      }
+
+      100% {
+        background-position: -200% 0;
+      }
+    }
+
+    /* Lock icon label on the Upload All button */
+    .mirror-pending .btn-upload-all .lock-icon {
+      display: inline-flex;
+      animation: lockPulse 1.8s ease-in-out infinite;
+    }
+
+    @keyframes lockPulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.5;
+        transform: scale(0.92);
+      }
+    }
+
+    /* Unlock burst animation */
+    .btn-unlocking {
+      animation: unlockBurst 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes unlockBurst {
+      0% {
+        transform: scale(0.95);
+        opacity: 0.55;
+        filter: saturate(0.3);
+        box-shadow: none;
+      }
+
+      40% {
+        transform: scale(1.08);
+        opacity: 1;
+        filter: saturate(1.2);
+        box-shadow: 0 0 28px rgba(0, 229, 160, 0.5);
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+        filter: saturate(1);
+        box-shadow: 0 0 12px rgba(0, 212, 255, 0.2);
+      }
+    }
+
+    /* Mirror progress bar inside the banner */
+    .mirror-progress-bar-wrap {
+      flex: 1;
+      height: 4px;
+      background: rgba(255, 180, 68, 0.15);
+      border-radius: 99px;
+      overflow: hidden;
+      min-width: 80px;
+    }
+
+    .mirror-progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--warning), #ffcf70);
+      border-radius: 99px;
+      transition: width 0.4s ease;
+      animation: mirrorBarPulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes mirrorBarPulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.65;
+      }
     }
 
     .top-bar {
@@ -619,7 +738,7 @@
   </style>
 </head>
 
-<body>
+<body data-strategy="{{ strategy }}">
   <header>
     <div class="header-left">
       <div class="tag">Scan Results</div>
@@ -648,73 +767,87 @@
 
 
   <div id="mirror-banner" class="mirror-banner"></div>
-  <div class="top-bar">
-    <div class="study-count"><strong> {{ studies|length }}
+  <div id="upload-section" class="{% if strategy in ['MIRROR_SSD', 'MIRROR_HDD'] %}mirror-pending{% endif %}">
+    <div class="top-bar">
+      <div class="study-count"><strong> {{ studies|length }}
 
-      </strong>study/studies across {{ studies | map(attribute='patient') | unique | list | length }}
+        </strong>study/studies across {{ studies | map(attribute='patient') | unique | list | length }}
 
-      patient(s) </div><button class="btn btn-upload-all" id="btn-upload-all" onclick="startUpload(null, null, null)">⬆
-      Upload All Studies</button>
-  </div>
-  <div class="studies-grid"> {% for s in studies %}
+        patient(s) </div>
+      {% if strategy in ['MIRROR_SSD', 'MIRROR_HDD'] %}
+      <button class="btn btn-upload-all" id="btn-upload-all" disabled onclick="startUpload(null, null, null)"><span
+          class="lock-icon">🔒</span> Mirroring…</button>
+      {% else %}
+      <button class="btn btn-upload-all" id="btn-upload-all" onclick="startUpload(null, null, null)">⬆ Upload All
+        Studies</button>
+      {% endif %}
+    </div>
+    <div class="studies-grid"> {% for s in studies %}
 
-    <div class="study-card" id="card-{{ loop.index0 }}" data-patient="{{ s.patient }}" data-study="{{ s.study_uid }}">
-      <div class="modality-badge"> {{ s.modality if s.modality else '??' }}
-
-      </div>
-      <div class="study-info">
-        <div class="study-patient"> {{ s.patient }}
+      <div class="study-card" id="card-{{ loop.index0 }}" data-patient="{{ s.patient }}" data-study="{{ s.study_uid }}">
+        <div class="modality-badge"> {{ s.modality if s.modality else '??' }}
 
         </div>
-        <div class="study-desc"> {{ s.desc if s.desc else '— No description —' }}
+        <div class="study-info">
+          <div class="study-patient"> {{ s.patient }}
 
+          </div>
+          <div class="study-desc"> {{ s.desc if s.desc else '— No description —' }}
+
+          </div>
+          <div class="study-meta"> {% if s.date %}
+
+            <span class="meta-pill">📅 {{ s.date[: 4] + '-' + s.date[4:6] + '-' + s.date[6:] if s.date|length==8 else
+              s.date }}
+
+            </span> {% endif %}
+
+            {% if s.patient_id %}
+
+            <span class="meta-pill">ID: {{ s.patient_id }}
+
+            </span> {% endif %}
+
+            {% if s.patient_sex %}
+
+            <span class="meta-pill">Sex: {{ s.patient_sex }}
+
+            </span> {% endif %}
+
+            {% if s.patient_age %}
+
+            <span class="meta-pill">Age: {{ s.patient_age }}
+
+            </span> {% endif %}
+
+            <span class="meta-pill"> {{ s.count }}
+
+              image {{ 's' if s.count !=1 else '' }}
+
+            </span><span class="meta-pill" style="word-break:break-all;font-size:9px;"> {{ s.study_uid[: 24] }}
+
+              …</span>
+            <span class="time-pill" id="time-{{ s.study_uid }}">⏱
+              —</span>
+          </div>
+
+          <div class="card-progress-wrap" id="cpw-{{ s.study_uid }}">
+            <div class="card-progress-bar" id="cpb-{{ s.study_uid }}"></div>
+          </div>
         </div>
-        <div class="study-meta"> {% if s.date %}
+        <div class="study-status" id="status-{{ loop.index0 }}">—</div>
+        {% if strategy in ['MIRROR_SSD', 'MIRROR_HDD'] %}
+        <button class="btn btn-study" id="btn-{{ loop.index0 }}" disabled
+          onclick="startUpload('{{ s.patient }}', '{{ s.study_uid }}', {{ loop.index0 }})">Upload</button>
+        {% else %}
+        <button class="btn btn-study" id="btn-{{ loop.index0 }}"
+          onclick="startUpload('{{ s.patient }}', '{{ s.study_uid }}', {{ loop.index0 }})">Upload</button>
+        {% endif %}
+      </div> {% endfor %}
 
-          <span class="meta-pill">📅 {{ s.date[: 4] + '-' + s.date[4:6] + '-' + s.date[6:] if s.date|length==8 else
-            s.date }}
-
-          </span> {% endif %}
-
-          {% if s.patient_id %}
-
-          <span class="meta-pill">ID: {{ s.patient_id }}
-
-          </span> {% endif %}
-
-          {% if s.patient_sex %}
-
-          <span class="meta-pill">Sex: {{ s.patient_sex }}
-
-          </span> {% endif %}
-
-          {% if s.patient_age %}
-
-          <span class="meta-pill">Age: {{ s.patient_age }}
-
-          </span> {% endif %}
-
-          <span class="meta-pill"> {{ s.count }}
-
-            image {{ 's' if s.count !=1 else '' }}
-
-          </span><span class="meta-pill" style="word-break:break-all;font-size:9px;"> {{ s.study_uid[: 24] }}
-
-            …</span>
-          <span class="time-pill" id="time-{{ s.study_uid }}">⏱
-            —</span>
-        </div>
-
-        <div class="card-progress-wrap" id="cpw-{{ s.study_uid }}">
-          <div class="card-progress-bar" id="cpb-{{ s.study_uid }}"></div>
-        </div>
-      </div>
-      <div class="study-status" id="status-{{ loop.index0 }}">—</div><button class="btn btn-study"
-        id="btn-{{ loop.index0 }}"
-        onclick="startUpload('{{ s.patient }}', '{{ s.study_uid }}', {{ loop.index0 }})">Upload</button>
-    </div> {% endfor %}
-
-  </div> {% else %}
+    </div>
+  </div> <!-- /upload-section -->
+  {% else %}
 
   <div
     style="max-width:760px;width:100%;text-align:center;padding:60px 20px;color:var(--text-muted);position:relative;z-index:1;">
@@ -1136,6 +1269,25 @@
       if (e.target === this) closeOverlay();
     });
 
+    function unlockMirrorButtons() {
+      const section = document.getElementById('upload-section');
+      if (section && section.classList.contains('mirror-pending')) {
+        section.classList.remove('mirror-pending');
+
+        const btnAll = document.getElementById('btn-upload-all');
+        if (btnAll) {
+          btnAll.disabled = false;
+          btnAll.innerHTML = '⬆ Upload All Studies';
+          btnAll.classList.add('btn-unlocking');
+        }
+
+        document.querySelectorAll('.btn-study').forEach(b => {
+          b.disabled = false;
+          b.classList.add('btn-unlocking');
+        });
+      }
+    }
+
     // ── Mirror-status banner polling ─────────────────────────────────
     async function pollMirrorStatus() {
       try {
@@ -1168,12 +1320,14 @@
 
           banner.innerHTML = `✅ CD copied to ${label} — upload will be fast!`;
           banner.className = 'mirror-banner visible banner-ready';
+          unlockMirrorButtons();
           return; // stop polling
         }
 
         if (data.failed) {
           banner.innerHTML = '⚠️ Mirror copy had errors — falling back to direct CD reads.';
           banner.className = 'mirror-banner visible banner-warn';
+          unlockMirrorButtons();
           return;
         }
 
