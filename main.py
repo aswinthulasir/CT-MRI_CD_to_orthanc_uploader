@@ -24,8 +24,6 @@ import io
 import json
 import os
 import platform
-import shutil
-import tempfile
 import time
 import zipfile
 import asyncio
@@ -47,6 +45,7 @@ ORTHANC_URL  = "http://localhost:8041/instances"
 ORTHANC_USER = "admin"
 ORTHANC_PASS = "password"
 
+<<<<<<< Updated upstream
 MAX_UPLOAD_WORKERS = 32   # concurrent async upload coroutines
 BATCH_SIZE         = 50   # DICOM files per ZIP POST
 PRELOAD_WORKERS    = 16   # threads for parallel disk reads
@@ -58,6 +57,11 @@ TEMP_BASE_DIR = os.environ.get(
     "DICOM_TEMP_DIR",
     os.path.join(tempfile.gettempdir(), "dicom_cd_temp"),
 )
+=======
+MAX_UPLOAD_WORKERS   = 32
+CD_SEMAPHORE = 2                   # default for optical drive (sequential is fastest)
+
+>>>>>>> Stashed changes
 
 # DICOM tags we actually need (avoids decoding the whole header)
 _DICOM_TAGS = [
@@ -73,8 +77,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 scan_cache: dict = {}
 
+<<<<<<< Updated upstream
 # Stores the current temp directory path so we can clean up after upload
 _active_temp_dir: str | None = None
+=======
+# No mirror — always stream directly from CD
+_STRATEGY = "STREAM_FROM_CD"
+>>>>>>> Stashed changes
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +159,7 @@ def _copy_single_file(args: tuple[str, str, str]) -> tuple[str, str | None]:
     Copy one file from the CD to the temp folder, preserving the relative
     directory structure.  Returns (dest_path, error_or_None).
     """
+<<<<<<< Updated upstream
     src_path, source_root, dest_root = args
     try:
         rel = os.path.relpath(src_path, source_root)
@@ -241,11 +251,159 @@ def _read_dicom_header(fpath: str) -> dict | None:
             "desc":      str(getattr(ds, "StudyDescription",  "")),
             "date":      str(getattr(ds, "StudyDate",         "")),
             "modality":  str(getattr(ds, "Modality",          "")),
+=======
+    dicomdir_path = os.path.abspath(dicomdir_path)
+    dicomdir_dir  = os.path.dirname(dicomdir_path)
+    t0 = time.monotonic()
+    print(f"[DICOMDIR] Parsing: {dicomdir_path}")
+    print(f"[DICOMDIR] File-set root: {dicomdir_dir}")
+
+    dicomdir = pydicom.dcmread(dicomdir_path)
+    if not hasattr(dicomdir, "DirectoryRecordSequence"):
+        print("[DICOMDIR] No DirectoryRecordSequence — cannot parse.")
+        return {}
+
+    studies: dict = defaultdict(lambda: defaultdict(list))
+    cur_patient = cur_patient_id = cur_patient_sex = cur_patient_age = ""
+    cur_study_uid = cur_desc = cur_date = cur_study_time = ""
+    cur_study_id = cur_accession = cur_modality = ""
+    cur_series_desc = cur_series_num = cur_series_uid = ""
+    cur_manufacturer = cur_model = cur_institution = ""
+    image_count = patient_count = study_count = series_count = 0
+    first_path_shown = False
+
+    for record in dicomdir.DirectoryRecordSequence:
+        rtype = _norm_str(getattr(record, "DirectoryRecordType", "")).upper()
+
+        if rtype == "PATIENT":
+            patient_count    += 1
+            raw_name          = _norm_str(getattr(record, "PatientName",  "Unknown"))
+            cur_patient_id    = _norm_str(getattr(record, "PatientID",    ""))
+            cur_patient_sex   = _norm_str(getattr(record, "PatientSex",   ""))
+            cur_patient_age   = _norm_str(getattr(record, "PatientAge",   ""))
+            cur_patient       = raw_name or "Unknown"
+
+        elif rtype == "STUDY":
+            study_count  += 1
+            cur_study_uid  = _norm_str(getattr(record, "StudyInstanceUID", "Unknown")) or "Unknown"
+            cur_desc       = _norm_str(getattr(record, "StudyDescription", ""))
+            cur_date       = _norm_str(getattr(record, "StudyDate",        ""))
+            cur_study_time = _norm_str(getattr(record, "StudyTime",        ""))
+            cur_study_id   = _norm_str(getattr(record, "StudyID",          ""))
+            cur_accession  = _norm_str(getattr(record, "AccessionNumber",  ""))
+
+        elif rtype == "SERIES":
+            series_count     += 1
+            cur_modality      = _norm_str(getattr(record, "Modality",              ""))
+            cur_series_desc   = _norm_str(getattr(record, "SeriesDescription",     ""))
+            cur_series_num    = _norm_str(getattr(record, "SeriesNumber",          ""))
+            cur_series_uid    = _norm_str(getattr(record, "SeriesInstanceUID",     ""))
+            cur_manufacturer  = _norm_str(getattr(record, "Manufacturer",          ""))
+            cur_model         = _norm_str(getattr(record, "ManufacturerModelName", ""))
+            cur_institution   = _norm_str(getattr(record, "InstitutionName",       ""))
+
+        elif rtype == "IMAGE":
+            ref_file_id = getattr(record, "ReferencedFileID", None)
+            if ref_file_id is None:
+                continue
+
+            if hasattr(ref_file_id, "__iter__") and not isinstance(ref_file_id, str):
+                parts = [str(p).strip() for p in ref_file_id if str(p).strip()]
+            else:
+                raw = str(ref_file_id).strip()
+                if "\\" in raw:
+                    parts = [p for p in raw.split("\\") if p]
+                elif "/" in raw:
+                    parts = [p for p in raw.split("/") if p]
+                else:
+                    parts = [raw]
+
+            if not parts:
+                continue
+
+            file_path = os.path.join(dicomdir_dir, *parts)
+
+            if not first_path_shown:
+                first_path_shown = True
+                exists = os.path.isfile(file_path)
+                print(f"[DICOMDIR] Sample path: {file_path!r}  exists={exists}")
+                if not exists:
+                    print(f"[DICOMDIR] WARNING: file not found — check path construction!")
+                    print(f"[DICOMDIR]   dicomdir_dir={dicomdir_dir!r}  parts={parts}")
+
+            studies[cur_patient][cur_study_uid].append({
+                "path":         file_path,
+                "patient":      cur_patient,
+                "patient_id":   cur_patient_id,
+                "patient_sex":  cur_patient_sex,
+                "patient_age":  cur_patient_age,
+                "study_uid":    cur_study_uid,
+                "desc":         cur_desc,
+                "date":         cur_date,
+                "study_time":   cur_study_time,
+                "study_id":     cur_study_id,
+                "accession":    cur_accession,
+                "modality":     cur_modality,
+                "series_desc":  cur_series_desc,
+                "series_num":   cur_series_num,
+                "series_uid":   cur_series_uid,
+                "manufacturer": cur_manufacturer,
+                "model":        cur_model,
+                "institution":  cur_institution,
+                # Per-image metadata available from DICOMDIR
+                "slice_thickness": _norm_str(getattr(record, "SliceThickness", "")),
+                "rows":            _norm_str(getattr(record, "Rows",           "")),
+                "columns":         _norm_str(getattr(record, "Columns",        "")),
+                "instance_number": _norm_str(getattr(record, "InstanceNumber", "")),
+            })
+            image_count += 1
+
+    elapsed = time.monotonic() - t0
+    print(
+        f"[DICOMDIR] ✓ Parsed in {elapsed*1000:.0f}ms — "
+        f"{patient_count} patient(s), {study_count} study(ies), "
+        f"{series_count} series, {image_count} images"
+    )
+    return {p: dict(s) for p, s in studies.items()}
+
+
+# ---------------------------------------------------------------------------
+# Step 2c — Fallback: parallel DICOM header scan (no DICOMDIR)
+# ---------------------------------------------------------------------------
+
+def _read_dicom_header(fpath: str) -> Optional[dict]:
+    try:
+        ds = pydicom.dcmread(fpath, specific_tags=_DICOM_TAGS)
+        return {
+            "path":         fpath,
+            "patient":      _norm_str(getattr(ds, "PatientName",      "Unknown")) or "Unknown",
+            "patient_id":   _norm_str(getattr(ds, "PatientID",        "")),
+            "patient_sex":  _norm_str(getattr(ds, "PatientSex",       "")),
+            "patient_age":  _norm_str(getattr(ds, "PatientAge",       "")),
+            "study_uid":    _norm_str(getattr(ds, "StudyInstanceUID", "Unknown")) or "Unknown",
+            "desc":         _norm_str(getattr(ds, "StudyDescription", "")),
+            "date":         _norm_str(getattr(ds, "StudyDate",        "")),
+            "study_time":   _norm_str(getattr(ds, "StudyTime",        "")),
+            "study_id":     "",
+            "accession":    "",
+            "modality":     _norm_str(getattr(ds, "Modality",         "")),
+            "series_desc":  "",
+            "series_num":   _norm_str(getattr(ds, "SeriesNumber",     "")),
+            "series_uid":   _norm_str(getattr(ds, "SeriesInstanceUID","Unknown")),
+            "manufacturer": "",
+            "model":        "",
+            "institution":  "",
+            "slice_thickness": "",
+            "rows":         "",
+            "columns":      "",
+            "instance_number": "",
+>>>>>>> Stashed changes
         }
     except Exception:
         return None
 
 
+<<<<<<< Updated upstream
 def scan_drive(drive_path: str) -> dict:
     """
     Scan directory for DICOM headers.
@@ -254,11 +412,18 @@ def scan_drive(drive_path: str) -> dict:
     print(f"[SCAN] Walking directory: {drive_path}")
     t0 = time.monotonic()
 
+=======
+def scan_drive_fallback(drive_path: str) -> dict:
+    """Fallback: walk drive and scan DICOM headers in parallel."""
+    print(f"[SCAN] Fallback walk of: {drive_path}")
+    t0 = time.monotonic()
+>>>>>>> Stashed changes
     all_paths = [
         os.path.join(root, fname)
         for root, _dirs, files in os.walk(drive_path)
         for fname in files
     ]
+<<<<<<< Updated upstream
     print(f"[SCAN] Found {len(all_paths)} files. Scanning DICOM headers with "
           f"{PRELOAD_WORKERS} threads …")
 
@@ -279,10 +444,27 @@ def scan_drive(drive_path: str) -> dict:
     num_studies = sum(len(s) for s in studies.values())
     print(f"[SCAN] ✓ Scan complete in {_fmt_duration(elapsed)}: "
           f"{valid} DICOM files, {num_patients} patients, {num_studies} studies")
+=======
+    print(f"[SCAN] Found {len(all_paths)} files. Scanning headers …")
+    studies: dict = defaultdict(lambda: defaultdict(list))
+    scanned = valid = 0
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for result in pool.map(_read_dicom_header, all_paths):
+            scanned += 1
+            if scanned % 200 == 0:
+                print(f"[SCAN]   scanned {scanned}/{len(all_paths)} …")
+            if result:
+                valid += 1
+                studies[result["patient"]][result["study_uid"]].append(result)
+    elapsed = time.monotonic() - t0
+    print(f"[SCAN] ✓ Done in {_fmt_duration(elapsed)}: {valid} DICOM, "
+          f"{len(studies)} patients, {sum(len(s) for s in studies.values())} studies")
+>>>>>>> Stashed changes
     return {p: dict(s) for p, s in studies.items()}
 
 
 # ---------------------------------------------------------------------------
+<<<<<<< Updated upstream
 # Step 4a — ZIP buffer assembly
 # ---------------------------------------------------------------------------
 
@@ -323,6 +505,9 @@ def preload_files(files: list) -> list:
 
 # ---------------------------------------------------------------------------
 # Step 4c — Upload helpers
+=======
+# Step 3 — Stream Helpers
+>>>>>>> Stashed changes
 # ---------------------------------------------------------------------------
 
 async def _upload_batch(batch: list[dict], client: httpx.AsyncClient) -> list[dict]:
@@ -372,18 +557,49 @@ def collect_files(patient, study) -> list:
             files.extend(scan_cache.get(p, {}).get(s, []))
     return files
 
+def _read_file_buffered(path: str) -> Optional[bytes]:
+    """Blocking file read — called via run_in_executor, throttled by cd_sem."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except Exception as exc:
+        print(f"[READ] ✗ {path!r}: {exc}")
+        return None
+
+def _iter_chunks(data: bytes, chunk: int = 65536):
+    """Yield bytes in 64 KB slices — httpx streams these to the socket."""
+    for i in range(0, len(data), chunk):
+        yield data[i: i + chunk]
 
 # ---------------------------------------------------------------------------
+<<<<<<< Updated upstream
 # Step 4d — SSE upload stream
 # ---------------------------------------------------------------------------
 
 async def upload_stream(files: list):
     """SSE generator for file upload with temp cleanup on completion."""
+=======
+# Step 4 — Main upload generator
+# ---------------------------------------------------------------------------
+
+async def upload_stream(files: list):
+    """
+    Pipelined SSE upload — no mirror, no batch barrier.
+
+        asyncio.Semaphore(CD_SEMAPHORE)      ← caps simultaneous CD reads
+        32 upload coroutines                 ← each acquires sem, reads file,
+                                                releases sem, then POSTs bytes
+
+    The CD is never idle while uploads are in-flight; Orthanc is never idle
+    while reads are stalled. True overlap at all times.
+    """
+>>>>>>> Stashed changes
     total      = len(files)
     done_count = 0
     failed     = 0
     wall_start = time.monotonic()
 
+<<<<<<< Updated upstream
     print(f"[UPLOAD] Starting upload of {total} files to Orthanc …")
     yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
 
@@ -401,6 +617,78 @@ async def upload_stream(files: list):
     batches = list(_chunk(loaded, BATCH_SIZE))
     limits  = httpx.Limits(
         max_connections=MAX_UPLOAD_WORKERS,
+=======
+    study_totals: dict = defaultdict(int)
+    study_counts: dict = defaultdict(int)
+    study_failed: dict = defaultdict(int)
+    study_starts: dict = {}
+    for f in files:
+        study_totals[f.get("study_uid", "__unknown__")] += 1
+
+    yield f"data: {json.dumps({'type': 'start', 'total': total, 'strategy': _STRATEGY})}\n\n"
+    yield f"data: {json.dumps({'type': 'progress', 'done': 0, 'total': total, 'failed': 0, 'file': 'Streaming directly from CD — upload starts immediately…', 'ok': True, 'elapsed': 0.0, 'study_uid': ''})}\n\n"
+
+    # Semaphore limits simultaneous open file handles on the optical drive.
+    cd_sem       = asyncio.Semaphore(CD_SEMAPHORE)
+    work_queue:  asyncio.Queue = asyncio.Queue(maxsize=MAX_UPLOAD_WORKERS * 2)
+    result_queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_event_loop()
+
+    # ── Producer: enqueues file-info dicts one at a time (no batching) ────────
+    async def producer():
+        for info in files:
+            await work_queue.put(info)
+        for _ in range(MAX_UPLOAD_WORKERS):
+            await work_queue.put(None)  # one sentinel per worker
+
+    # ── Per-file: read (throttled) then upload (concurrent) ───────────────────
+    async def stream_upload(info: dict, client: httpx.AsyncClient) -> dict:
+        path = info["path"]
+        study_uid = info.get("study_uid", "")
+        
+        # Check if file exists first
+        if not os.path.isfile(path):
+            error = f"file not found: {path}"
+            print(f"[UPLOAD] ✗ {error}")
+            return {"path": path, "ok": False, "error": error, "study_uid": study_uid}
+        
+        async with cd_sem:                          # throttle concurrent CD reads
+            data = await loop.run_in_executor(None, _read_file_buffered, path)
+
+        if data is None:
+            error = "read failed"
+            print(f"[UPLOAD] ✗ {path}: {error}")
+            return {"path": path, "ok": False, "error": error, "study_uid": study_uid}
+        
+        try:
+            r = await client.post(
+                ORTHANC_URL,
+                content=data,  # POST bytes directly instead of generator
+                headers={"Content-Type": "application/dicom"},
+            )
+            success = r.status_code in (200, 409)
+            if not success:
+                print(f"[UPLOAD] ✗ {os.path.basename(path)}: HTTP {r.status_code}")
+            return {"path": path, "ok": success,
+                    "status": r.status_code, "study_uid": study_uid}
+        except Exception as exc:
+            print(f"[UPLOAD] ✗ {os.path.basename(path)}: {exc}")
+            return {"path": path, "ok": False, "error": str(exc), "study_uid": study_uid}
+
+    # ── Worker: drains queue, calls stream_upload ─────────────────────────────
+    async def worker(client: httpx.AsyncClient):
+        while True:
+            info = await work_queue.get()
+            if info is None:
+                break
+            result = await stream_upload(info, client)
+            await result_queue.put(result)
+        await result_queue.put(None)    # signals this worker finished
+
+    # ── Launch ────────────────────────────────────────────────────────────────
+    limits = httpx.Limits(
+        max_connections=MAX_UPLOAD_WORKERS + 4,
+>>>>>>> Stashed changes
         max_keepalive_connections=MAX_UPLOAD_WORKERS,
     )
     sem = asyncio.Semaphore(MAX_UPLOAD_WORKERS)
@@ -416,6 +704,7 @@ async def upload_stream(files: list):
           f"with {MAX_UPLOAD_WORKERS} concurrent workers …")
 
     async with httpx.AsyncClient(
+<<<<<<< Updated upstream
         auth=(ORTHANC_USER, ORTHANC_PASS), limits=limits
     ) as client:
         tasks = [asyncio.create_task(upload_batch_sem(b)) for b in batches]
@@ -428,12 +717,29 @@ async def upload_stream(files: list):
                 if not result["ok"]:
                     failed += 1
                     study_failed[uid] += 1
+=======
+        auth=(ORTHANC_USER, ORTHANC_PASS),
+        limits=limits,
+        http2=True,
+        timeout=httpx.Timeout(connect=5, read=60, write=60, pool=10),
+    ) as client:
+        prod    = asyncio.create_task(producer())
+        workers = [asyncio.create_task(worker(client)) for _ in range(MAX_UPLOAD_WORKERS)]
+
+        workers_done = 0
+        while workers_done < MAX_UPLOAD_WORKERS:
+            result = await result_queue.get()
+            if result is None:
+                workers_done += 1
+                continue
+>>>>>>> Stashed changes
 
                 elapsed = time.monotonic() - wall_start
                 yield (
                     f"data: {json.dumps({'type': 'progress', 'done': done_count, 'total': total, 'failed': failed, 'file': os.path.basename(result['path']), 'ok': result['ok'], 'elapsed': round(elapsed, 1), 'study_uid': uid})}\n\n"
                 )
 
+<<<<<<< Updated upstream
                 if study_counts[uid] == study_totals[uid]:
                     study_elapsed = time.monotonic() - study_starts.get(uid, wall_start)
                     s_ok = study_totals[uid] - study_failed[uid]
@@ -454,13 +760,29 @@ async def upload_stream(files: list):
 
     yield (
         f"data: {json.dumps({'type': 'done', 'total': total, 'succeeded': total-failed, 'failed': failed, 'elapsed': round(total_elapsed, 1), 'elapsed_str': _fmt_duration(total_elapsed)})}\n\n"
-    )
+=======
+        await prod
 
+    total_elapsed = time.monotonic() - wall_start
+    print(f"[UPLOAD] ✓ Complete: {total - failed} ok, {failed} failed "
+          f"in {_fmt_duration(total_elapsed)}")
+    yield (
+        f"data: {json.dumps({'type': 'done', 'total': total, 'succeeded': total - failed, 'failed': failed, 'elapsed': round(total_elapsed, 1), 'elapsed_str': _fmt_duration(total_elapsed), 'strategy': _STRATEGY})}\n\n"
+>>>>>>> Stashed changes
+    )
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
+<<<<<<< Updated upstream
+=======
+@app.on_event("startup")
+async def on_startup():
+    print(f"[STARTUP] DICOM CD Importer ready — strategy: {_STRATEGY}")
+
+
+>>>>>>> Stashed changes
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     return templates.TemplateResponse(
@@ -490,6 +812,11 @@ async def scan(request: Request, drive: str = Form(...)):
 
     scan_cache.clear()
     scan_cache.update(studies_raw)
+<<<<<<< Updated upstream
+=======
+    # Step 3: Set strategy
+    strategy = _STRATEGY
+>>>>>>> Stashed changes
 
     pipeline_elapsed = time.monotonic() - t_pipeline
     total_dicoms = sum(
@@ -530,3 +857,9 @@ async def upload_stream_route(patient: str = "", study: str = ""):
 @app.get("/detect-drives")
 def detect_drives_route():
     return {"drives": detect_cd_drives()}
+<<<<<<< Updated upstream
+=======
+
+
+
+>>>>>>> Stashed changes
