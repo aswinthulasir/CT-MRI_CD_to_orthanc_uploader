@@ -47,6 +47,7 @@ ORTHANC_PASS = "password"
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 MAX_UPLOAD_WORKERS = 32   # concurrent async upload coroutines
 BATCH_SIZE         = 50   # DICOM files per ZIP POST
 PRELOAD_WORKERS    = 16   # threads for parallel disk reads
@@ -64,6 +65,11 @@ CD_SEMAPHORE = 2                   # default for optical drive (sequential is fa
 =======
 MAX_UPLOAD_WORKERS   = 32
 CD_SEMAPHORE = 2                   # default for optical drive (sequential is fastest)
+=======
+MAX_UPLOAD_WORKERS   = 32
+CD_SEMAPHORE = 2                   # default for optical drive (sequential is fastest)
+
+>>>>>>> Stashed changes
 
 >>>>>>> Stashed changes
 
@@ -85,8 +91,13 @@ scan_cache: dict = {}
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 # Stores the current temp directory path so we can clean up after upload
 _active_temp_dir: str | None = None
+=======
+# No mirror — always stream directly from CD
+_STRATEGY = "STREAM_FROM_CD"
+>>>>>>> Stashed changes
 =======
 # No mirror — always stream directly from CD
 _STRATEGY = "STREAM_FROM_CD"
@@ -477,6 +488,7 @@ def scan_drive_fallback(drive_path: str) -> dict:
 # ---------------------------------------------------------------------------
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 # Step 4a — ZIP buffer assembly
 # ---------------------------------------------------------------------------
 
@@ -561,6 +573,8 @@ def _chunk(lst: list, size: int):
 
 
 =======
+=======
+>>>>>>> Stashed changes
 # Step 3 — Stream Helpers
 # ---------------------------------------------------------------------------
 
@@ -591,12 +605,15 @@ def _iter_chunks(data: bytes, chunk: int = 65536):
 # ---------------------------------------------------------------------------
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 # Step 4d — SSE upload stream
 # ---------------------------------------------------------------------------
 
 async def upload_stream(files: list):
     """SSE generator for file upload with temp cleanup on completion."""
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
 # Step 4 — Main upload generator
@@ -621,6 +638,7 @@ async def upload_stream(files: list):
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     print(f"[UPLOAD] Starting upload of {total} files to Orthanc …")
     yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
 
@@ -639,6 +657,8 @@ async def upload_stream(files: list):
     limits  = httpx.Limits(
         max_connections=MAX_UPLOAD_WORKERS,
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     study_totals: dict = defaultdict(int)
@@ -764,6 +784,7 @@ async def upload_stream(files: list):
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
                 if study_counts[uid] == study_totals[uid]:
                     study_elapsed = time.monotonic() - study_starts.get(uid, wall_start)
                     s_ok = study_totals[uid] - study_failed[uid]
@@ -795,6 +816,17 @@ async def upload_stream(files: list):
 >>>>>>> Stashed changes
     )
 
+=======
+        await prod
+
+    total_elapsed = time.monotonic() - wall_start
+    print(f"[UPLOAD] ✓ Complete: {total - failed} ok, {failed} failed "
+          f"in {_fmt_duration(total_elapsed)}")
+    yield (
+        f"data: {json.dumps({'type': 'done', 'total': total, 'succeeded': total - failed, 'failed': failed, 'elapsed': round(total_elapsed, 1), 'elapsed_str': _fmt_duration(total_elapsed), 'strategy': _STRATEGY})}\n\n"
+    )
+
+>>>>>>> Stashed changes
 =======
         await prod
 
@@ -849,6 +881,11 @@ async def scan(request: Request, drive: str = Form(...)):
     scan_cache.update(studies_raw)
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+    # Step 3: Set strategy
+    strategy = _STRATEGY
+>>>>>>> Stashed changes
 =======
     # Step 3: Set strategy
     strategy = _STRATEGY
@@ -903,6 +940,9 @@ def detect_drives_route():
 
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
