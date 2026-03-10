@@ -172,18 +172,6 @@
       opacity: 0.4;
       cursor: not-allowed;
     }
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-    
->>>>>>> Stashed changes
-=======
-    
->>>>>>> Stashed changes
-=======
-    
->>>>>>> Stashed changes
 
     .top-bar {
       width: 100%;
@@ -590,18 +578,6 @@
     #toast.error {
       border-color: rgba(255, 85, 102, 0.4);
     }
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
-  
->>>>>>> Stashed changes
-=======
-  
->>>>>>> Stashed changes
-=======
-  
->>>>>>> Stashed changes
   </style>
 </head>
 
@@ -649,98 +625,15 @@
           <div class="card-progress-bar" id="cpb-{{ s.study_uid }}"></div>
         </div>
       </div>
-<<<<<<< Updated upstream
       <div class="study-status" id="status-{{ loop.index0 }}">—</div>
       <button class="btn btn-study" id="btn-{{ loop.index0 }}"
         onclick="startUpload('{{ s.patient }}', '{{ s.study_uid }}', {{ loop.index0 }})">
         Upload
       </button>
-=======
-    </div><a href="/" class="btn btn-back">← Back</a>
-  </header> {% if studies %}
-
-
-  <div id="upload-section">
-    <div class="top-bar">
-      <div class="study-count"><strong> {{ studies|length }}
-
-        </strong>study/studies across {{ studies | map(attribute='patient') | unique | list | length }}
-
-        patient(s) </div>
-      <button class="btn btn-upload-all" id="btn-upload-all"
-        onclick="startUpload(null, null, null)">⬆ Upload All Studies</button>
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     </div>
     {% endfor %}
   </div>
 
-<<<<<<< Updated upstream
-=======
-      <div class="study-card" id="card-{{ loop.index0 }}" data-patient="{{ s.patient }}" data-study="{{ s.study_uid }}">
-        <div class="modality-badge"> {{ s.modality if s.modality else '??' }}
-
-        </div>
-        <div class="study-info">
-          <div class="study-patient"> {{ s.patient }}
-
-          </div>
-          <div class="study-desc"> {{ s.desc if s.desc else '— No description —' }}
-
-          </div>
-          <div class="study-meta"> {% if s.date %}
-
-            <span class="meta-pill">📅 {{ s.date[: 4] + '-' + s.date[4:6] + '-' + s.date[6:] if s.date|length==8 else
-              s.date }}
-
-            </span> {% endif %}
-
-            {% if s.patient_id %}
-
-            <span class="meta-pill">ID: {{ s.patient_id }}
-
-            </span> {% endif %}
-
-            {% if s.patient_sex %}
-
-            <span class="meta-pill">Sex: {{ s.patient_sex }}
-
-            </span> {% endif %}
-
-            {% if s.patient_age %}
-
-            <span class="meta-pill">Age: {{ s.patient_age }}
-
-            </span> {% endif %}
-
-            <span class="meta-pill"> {{ s.count }}
-
-              image {{ 's' if s.count !=1 else '' }}
-
-            </span><span class="meta-pill" style="word-break:break-all;font-size:9px;"> {{ s.study_uid[: 24] }}
-
-              …</span>
-            <span class="time-pill" id="time-{{ s.study_uid }}">⏱
-              —</span>
-          </div>
-
-          <div class="card-progress-wrap" id="cpw-{{ s.study_uid }}">
-            <div class="card-progress-bar" id="cpb-{{ s.study_uid }}"></div>
-          </div>
-        </div>
-        <div class="study-status" id="status-{{ loop.index0 }}">—</div>
-        <button class="btn btn-study" id="btn-{{ loop.index0 }}"
-          onclick="startUpload('{{ s.patient }}', '{{ s.study_uid }}', {{ loop.index0 }})">Upload</button>
-      </div> {% endfor %}
-
-    </div>
-  </div> <!-- /upload-section -->
->>>>>>> Stashed changes
   {% else %}
   <div
     style="max-width:760px;width:100%;text-align:center;padding:60px 20px;color:var(--text-muted);position:relative;z-index:1;">
