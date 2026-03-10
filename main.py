@@ -31,15 +31,17 @@ from typing import Optional
 import httpx
 import pydicom
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-ORTHANC_URL  = "http://localhost:8042/instances"
+ORTHANC_BASE = "http://localhost:8042"       # Orthanc base URL (no trailing slash)
+ORTHANC_URL  = ORTHANC_BASE + "/instances"   # Upload endpoint
 ORTHANC_USER = "admin"
 ORTHANC_PASS = "password"
 
@@ -417,11 +419,20 @@ async def _upload_single(file_info: dict, client: httpx.AsyncClient) -> dict:
             headers={"Content-Type": "application/dicom"},
             timeout=UPLOAD_TIMEOUT,
         )
+        # Extract Orthanc's internal ID for the parent study (for C-STORE)
+        orthanc_study_id = ""
+        if r.status_code == 200:
+            try:
+                body = r.json()
+                orthanc_study_id = body.get("ParentStudy", "")
+            except Exception:
+                pass
         return {
-            "path":      file_info["path"],
-            "ok":        r.status_code in (200, 409),
-            "status":    r.status_code,
-            "study_uid": study_uid,
+            "path":            file_info["path"],
+            "ok":              r.status_code in (200, 409),
+            "status":          r.status_code,
+            "study_uid":       study_uid,
+            "orthanc_study_id": orthanc_study_id,
         }
     except Exception as exc:
         return {
@@ -459,6 +470,8 @@ async def upload_stream(files: list):
     done_count = 0
     failed     = 0
     wall_start = time.monotonic()
+    # Collect unique Orthanc study IDs for post-upload C-STORE
+    orthanc_study_ids: set = set()
 
     print(f"[UPLOAD] Starting upload of {total} files to Orthanc ...")
     yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
@@ -519,6 +532,10 @@ async def upload_stream(files: list):
             done_count += 1
             uid = result.get("study_uid", "__unknown__")
             study_counts[uid] += 1
+            # Track Orthanc internal study ID for C-STORE
+            oid = result.get("orthanc_study_id", "")
+            if oid:
+                orthanc_study_ids.add(oid)
             if not result["ok"]:
                 failed += 1
                 study_failed[uid] += 1
@@ -566,7 +583,8 @@ async def upload_stream(files: list):
         'succeeded': total - failed,
         'failed': failed,
         'elapsed': round(total_elapsed, 1),
-        'elapsed_str': _fmt_duration(total_elapsed)
+        'elapsed_str': _fmt_duration(total_elapsed),
+        'orthanc_study_ids': list(orthanc_study_ids),
     }
     yield f"data: {json.dumps(done_data)}\n\n"
 
@@ -638,3 +656,71 @@ async def upload_stream_route(patient: str = "", study: str = ""):
 @app.get("/detect-drives")
 def detect_drives_route():
     return {"drives": detect_cd_drives()}
+
+
+# ---------------------------------------------------------------------------
+# DICOM Modality endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/modalities")
+async def list_modalities():
+    """List DICOM modalities configured in Orthanc."""
+    try:
+        async with httpx.AsyncClient(
+            auth=(ORTHANC_USER, ORTHANC_PASS), timeout=10
+        ) as client:
+            r = await client.get(f"{ORTHANC_BASE}/modalities")
+            if r.status_code == 200:
+                modalities = r.json()  # returns a list of modality names
+                print(f"[MODALITY] Found {len(modalities)} configured modality(ies): {modalities}")
+                return {"modalities": modalities}
+            return JSONResponse(
+                {"error": f"Orthanc returned {r.status_code}"},
+                status_code=r.status_code,
+            )
+    except Exception as exc:
+        print(f"[MODALITY] Error listing modalities: {exc}")
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+class SendToModalityRequest(BaseModel):
+    modality: str
+    orthanc_study_ids: list[str]
+
+
+@app.post("/send-to-modality")
+async def send_to_modality(req: SendToModalityRequest):
+    """
+    Send uploaded studies to a DICOM modality via Orthanc C-STORE.
+    Uses POST /modalities/{name}/store with a list of Orthanc study IDs.
+    """
+    modality = req.modality
+    study_ids = req.orthanc_study_ids
+
+    if not study_ids:
+        return JSONResponse({"error": "No study IDs provided"}, status_code=400)
+
+    print(f"[MODALITY] Sending {len(study_ids)} study(ies) to modality '{modality}'")
+    print(f"[MODALITY] Study IDs: {study_ids}")
+
+    try:
+        async with httpx.AsyncClient(
+            auth=(ORTHANC_USER, ORTHANC_PASS), timeout=300
+        ) as client:
+            r = await client.post(
+                f"{ORTHANC_BASE}/modalities/{modality}/store",
+                json=study_ids,
+            )
+            if r.status_code == 200:
+                print(f"[MODALITY] C-STORE to '{modality}' succeeded")
+                return {"ok": True, "modality": modality, "studies_sent": len(study_ids)}
+            else:
+                body = r.text
+                print(f"[MODALITY] C-STORE failed: {r.status_code} — {body}")
+                return JSONResponse(
+                    {"ok": False, "error": f"Orthanc returned {r.status_code}: {body}"},
+                    status_code=r.status_code,
+                )
+    except Exception as exc:
+        print(f"[MODALITY] C-STORE error: {exc}")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
