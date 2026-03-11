@@ -652,31 +652,7 @@
       font-size: 18px;
     }
 
-    .btn-send-modality {
-      background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
-      color: #000;
-      padding: 12px 24px;
-      font-size: 12px;
-      font-weight: 700;
-      margin-top: 8px;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-family: var(--mono);
-      letter-spacing: 0.05em;
-      transition: all 0.15s;
-    }
 
-    .btn-send-modality:hover {
-      box-shadow: 0 4px 20px rgba(0, 212, 255, 0.35);
-      transform: translateY(-1px);
-    }
-
-    .btn-send-modality:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-      transform: none;
-    }
 
     .modality-status {
       margin-top: 16px;
@@ -714,6 +690,27 @@
     .btn-cancel-modality:hover {
       border-color: var(--accent);
       color: var(--accent);
+    }
+
+    /* Inline modality auto-send status in done banner */
+    .modality-auto-status {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 12px 0 4px;
+      min-height: 18px;
+    }
+
+    .modality-auto-status.sending {
+      color: var(--accent);
+    }
+
+    .modality-auto-status.sent-ok {
+      color: var(--success);
+    }
+
+    .modality-auto-status.sent-err {
+      color: var(--danger);
     }
   </style>
 </head>
@@ -816,7 +813,7 @@
   <!-- Modality Selector Overlay -->
   <div id="modality-overlay">
     <div class="modality-box" id="modality-box">
-      <h2 id="modality-title">📡 Send to DICOM Modality</h2>
+      <h2 id="modality-title">Send to DICOM Modality</h2>
       <div class="subtitle" id="modality-subtitle">Select a modality to send the uploaded studies</div>
       <div class="modality-list" id="modality-list"></div>
       <div class="modality-status" id="modality-status"></div>
@@ -1095,7 +1092,7 @@
           lastOrthancStudyIds = msg.orthanc_study_ids || [];
 
           // Small delay to let the 100% animation complete before showing banner
-          setTimeout(() => {
+          setTimeout(async () => {
             smoother.stop();
             document.getElementById('progress-inner').style.display = 'none';
             const banner = document.getElementById('done-banner');
@@ -1109,8 +1106,7 @@
               <div class="done-title success">Upload Complete</div>
               <div class="done-sub">${msg.succeeded} file${msg.succeeded !== 1 ? 's' : ''} sent to Orthanc</div>
               <div class="done-time">⏱ Total time: ${timeStr}</div>
-              <button class="btn-send-modality" id="btn-send-modality" onclick="openModalitySender()">📡 Send to DICOM Modality</button>
-              <br>
+              <div class="modality-auto-status" id="modality-inline-status"></div>
               <button class="btn btn-study" onclick="closeOverlay()" style="margin:8px auto 0;">Close</button>
             `;
               showToast('success', '✓ ' + msg.succeeded + ' files uploaded in ' + timeStr);
@@ -1120,8 +1116,7 @@
               <div class="done-title partial">Partial Upload</div>
               <div class="done-sub">${msg.succeeded} succeeded, ${msg.failed} failed</div>
               <div class="done-time">⏱ Total time: ${timeStr}</div>
-              <button class="btn-send-modality" id="btn-send-modality" onclick="openModalitySender()">📡 Send to DICOM Modality</button>
-              <br>
+              <div class="modality-auto-status" id="modality-inline-status"></div>
               <button class="btn btn-study" onclick="closeOverlay()" style="margin:8px auto 0;">Close</button>
             `;
               showToast('error', '⚠ ' + msg.failed + ' files failed to upload');
@@ -1139,6 +1134,11 @@
             // Re-enable all buttons
             document.getElementById('btn-upload-all').disabled = false;
             document.querySelectorAll('[id^="btn-"]').forEach(b => b.disabled = false);
+
+            // Auto-send to DICOM modality if any files succeeded
+            if (msg.succeeded > 0 && lastOrthancStudyIds.length > 0) {
+              await autoSendToModality();
+            }
           }, 600); // wait for 100% animation to complete
         }
       };
@@ -1179,90 +1179,49 @@
       if (e.target === this) closeOverlay();
     });
 
-    // ─── DICOM Modality Send Flow ─────────────────────────────────
-    async function openModalitySender() {
-      if (!lastOrthancStudyIds.length) {
-        showToast('error', '✗ No Orthanc study IDs available');
-        return;
-      }
+    // ─── Automatic DICOM Modality Send Flow ───────────────────────
+    async function autoSendToModality() {
+      const inlineEl = document.getElementById('modality-inline-status');
+      if (!inlineEl) return;
 
-      // Fetch available modalities from Orthanc
-      const statusEl = document.getElementById('modality-status');
-      const listEl = document.getElementById('modality-list');
-      const titleEl = document.getElementById('modality-title');
-      const subEl = document.getElementById('modality-subtitle');
-
-      listEl.innerHTML = '';
-      statusEl.textContent = 'Fetching modalities...';
-      statusEl.className = 'modality-status sending';
-      document.getElementById('btn-cancel-modality').style.display = 'inline-block';
-
-      // Show overlay
-      document.getElementById('modality-overlay').classList.add('active');
+      inlineEl.textContent = 'Connecting to modality...';
+      inlineEl.className = 'modality-auto-status sending';
 
       try {
+        // Fetch available modalities
         const resp = await fetch('/modalities');
         const data = await resp.json();
 
         if (data.error) {
-          statusEl.textContent = 'Error: ' + data.error;
-          statusEl.className = 'modality-status sent-err';
+          inlineEl.textContent = '✗ Modality error: ' + data.error;
+          inlineEl.className = 'modality-auto-status sent-err';
           return;
         }
 
         const modalities = data.modalities || [];
 
         if (modalities.length === 0) {
-          titleEl.textContent = '📡 No Modalities Found';
-          subEl.textContent = 'No DICOM modalities are configured in Orthanc.';
-          statusEl.textContent = '';
+          inlineEl.textContent = 'No DICOM modalities configured in Orthanc';
+          inlineEl.className = 'modality-auto-status';
           return;
         }
 
         if (modalities.length === 1) {
-          // Auto-send to the only modality
-          titleEl.textContent = '📡 Sending to ' + modalities[0];
-          subEl.textContent = 'Only one modality configured — sending automatically...';
-          statusEl.textContent = 'Sending...';
-          statusEl.className = 'modality-status sending';
-          document.getElementById('btn-cancel-modality').style.display = 'none';
-          await doSendToModality(modalities[0]);
-          return;
+          // Single modality — auto-send immediately
+          inlineEl.textContent = 'Sending to ' + modalities[0] + '...';
+          inlineEl.className = 'modality-auto-status sending';
+          await doSendToModalityInline(modalities[0], inlineEl);
+        } else {
+          // Multiple modalities — show overlay picker
+          openModalityPicker(modalities);
         }
-
-        // Multiple modalities — show picker
-        titleEl.textContent = '📡 Select DICOM Modality';
-        subEl.textContent = `${modalities.length} modalities available. Choose where to send ${lastOrthancStudyIds.length} study(ies):`;
-        statusEl.textContent = '';
-        statusEl.className = 'modality-status';
-
-        modalities.forEach(name => {
-          const btn = document.createElement('button');
-          btn.className = 'modality-option';
-          btn.innerHTML = `<span class="icon">📡</span> ${name}`;
-          btn.onclick = async () => {
-            // Disable all options
-            listEl.querySelectorAll('.modality-option').forEach(b => {
-              b.disabled = true;
-              b.style.opacity = '0.4';
-            });
-            btn.style.opacity = '1';
-            btn.style.borderColor = 'var(--accent)';
-            statusEl.textContent = `Sending to ${name}...`;
-            statusEl.className = 'modality-status sending';
-            await doSendToModality(name);
-          };
-          listEl.appendChild(btn);
-        });
-
       } catch (err) {
-        statusEl.textContent = 'Connection error: ' + err.message;
-        statusEl.className = 'modality-status sent-err';
+        inlineEl.textContent = '✗ Connection error: ' + err.message;
+        inlineEl.className = 'modality-auto-status sent-err';
       }
     }
 
-    async function doSendToModality(modality) {
-      const statusEl = document.getElementById('modality-status');
+    async function doSendToModalityInline(modality, statusEl) {
       try {
         const resp = await fetch('/send-to-modality', {
           method: 'POST',
@@ -1275,21 +1234,89 @@
         const data = await resp.json();
 
         if (data.ok) {
-          statusEl.innerHTML = `✓ Successfully sent ${data.studies_sent} study(ies) to <strong>${modality}</strong>`;
+          statusEl.innerHTML = '✓ Sent ' + data.studies_sent + ' study(ies) to <strong>' + modality + '</strong>';
+          statusEl.className = 'modality-auto-status sent-ok';
+          showToast('success', '✓ Sent to ' + modality);
+        } else {
+          statusEl.textContent = '✗ Send failed: ' + (data.error || 'Unknown error');
+          statusEl.className = 'modality-auto-status sent-err';
+          showToast('error', '✗ Send to ' + modality + ' failed');
+        }
+      } catch (err) {
+        statusEl.textContent = '✗ Connection error: ' + err.message;
+        statusEl.className = 'modality-auto-status sent-err';
+      }
+    }
+
+    function openModalityPicker(modalities) {
+      const listEl = document.getElementById('modality-list');
+      const statusEl = document.getElementById('modality-status');
+      const titleEl = document.getElementById('modality-title');
+      const subEl = document.getElementById('modality-subtitle');
+
+      titleEl.textContent = 'Select DICOM Modality';
+      subEl.textContent = modalities.length + ' modalities available. Choose where to send:';
+      listEl.innerHTML = '';
+      statusEl.textContent = '';
+      statusEl.className = 'modality-status';
+      document.getElementById('btn-cancel-modality').style.display = 'inline-block';
+
+      modalities.forEach(name => {
+        const btn = document.createElement('button');
+        btn.className = 'modality-option';
+        btn.textContent = name;
+        btn.onclick = async () => {
+          listEl.querySelectorAll('.modality-option').forEach(b => {
+            b.disabled = true;
+            b.style.opacity = '0.4';
+          });
+          btn.style.opacity = '1';
+          btn.style.borderColor = 'var(--accent)';
+          statusEl.textContent = 'Sending to ' + name + '...';
+          statusEl.className = 'modality-status sending';
+          await doSendToModalityOverlay(name);
+        };
+        listEl.appendChild(btn);
+      });
+
+      document.getElementById('modality-overlay').classList.add('active');
+    }
+
+    async function doSendToModalityOverlay(modality) {
+      const statusEl = document.getElementById('modality-status');
+      const inlineEl = document.getElementById('modality-inline-status');
+      try {
+        const resp = await fetch('/send-to-modality', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            modality: modality,
+            orthanc_study_ids: lastOrthancStudyIds,
+          }),
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+          statusEl.innerHTML = '✓ Sent ' + data.studies_sent + ' study(ies) to <strong>' + modality + '</strong>';
           statusEl.className = 'modality-status sent-ok';
-          showToast('success', `✓ Sent to ${modality}`);
-          // Auto-close after 2s
-          setTimeout(() => closeModalityOverlay(), 2000);
+          if (inlineEl) {
+            inlineEl.innerHTML = '✓ Sent to <strong>' + modality + '</strong>';
+            inlineEl.className = 'modality-auto-status sent-ok';
+          }
+          showToast('success', '✓ Sent to ' + modality);
+          setTimeout(() => closeModalityOverlay(), 1500);
         } else {
           statusEl.textContent = '✗ Failed: ' + (data.error || 'Unknown error');
           statusEl.className = 'modality-status sent-err';
-          showToast('error', `✗ Send to ${modality} failed`);
-          document.getElementById('btn-cancel-modality').style.display = 'inline-block';
+          if (inlineEl) {
+            inlineEl.textContent = '✗ Send to ' + modality + ' failed';
+            inlineEl.className = 'modality-auto-status sent-err';
+          }
+          showToast('error', '✗ Send to ' + modality + ' failed');
         }
       } catch (err) {
         statusEl.textContent = '✗ Connection error: ' + err.message;
         statusEl.className = 'modality-status sent-err';
-        document.getElementById('btn-cancel-modality').style.display = 'inline-block';
       }
     }
 
@@ -1297,7 +1324,6 @@
       document.getElementById('modality-overlay').classList.remove('active');
     }
 
-    // Close modality overlay on backdrop click
     document.getElementById('modality-overlay').addEventListener('click', function (e) {
       if (e.target === this) closeModalityOverlay();
     });

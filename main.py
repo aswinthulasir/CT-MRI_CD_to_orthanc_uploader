@@ -48,6 +48,7 @@ ORTHANC_PASS = "password"
 MAX_UPLOAD_WORKERS = 64          # concurrent async upload coroutines
 PRELOAD_WORKERS    = 16          # threads for parallel disk reads
 UPLOAD_TIMEOUT     = 30          # seconds per individual file upload
+MAX_RETRIES        = 3           # retry attempts for transient upload errors
 
 # DICOM tags needed for fallback header scan (avoids decoding the whole header)
 _DICOM_TAGS = [
@@ -401,8 +402,9 @@ def preload_files(files: list) -> list:
 # ---------------------------------------------------------------------------
 
 async def _upload_single(file_info: dict, client: httpx.AsyncClient) -> dict:
-    """Upload a single DICOM file to Orthanc using httpx."""
+    """Upload a single DICOM file to Orthanc using httpx, with retry on transient errors."""
     study_uid = file_info.get("study_uid", "__unknown__")
+    fname = os.path.basename(file_info["path"])
 
     if not file_info.get("data"):
         return {
@@ -412,35 +414,52 @@ async def _upload_single(file_info: dict, client: httpx.AsyncClient) -> dict:
             "study_uid": study_uid,
         }
 
-    try:
-        r = await client.post(
-            ORTHANC_URL,
-            content=file_info["data"],
-            headers={"Content-Type": "application/dicom"},
-            timeout=UPLOAD_TIMEOUT,
-        )
-        # Extract Orthanc's internal ID for the parent study (for C-STORE)
-        orthanc_study_id = ""
-        if r.status_code == 200:
-            try:
-                body = r.json()
-                orthanc_study_id = body.get("ParentStudy", "")
-            except Exception:
-                pass
-        return {
-            "path":            file_info["path"],
-            "ok":              r.status_code in (200, 409),
-            "status":          r.status_code,
-            "study_uid":       study_uid,
-            "orthanc_study_id": orthanc_study_id,
-        }
-    except Exception as exc:
-        return {
-            "path":      file_info["path"],
-            "ok":        False,
-            "error":     str(exc),
-            "study_uid": study_uid,
-        }
+    last_error = ""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            r = await client.post(
+                ORTHANC_URL,
+                content=file_info["data"],
+                headers={"Content-Type": "application/dicom"},
+                timeout=UPLOAD_TIMEOUT,
+            )
+            # Extract Orthanc's internal ID for the parent study (for C-STORE)
+            orthanc_study_id = ""
+            if r.status_code == 200:
+                try:
+                    body = r.json()
+                    orthanc_study_id = body.get("ParentStudy", "")
+                except Exception:
+                    pass
+            return {
+                "path":            file_info["path"],
+                "ok":              r.status_code in (200, 409),
+                "status":          r.status_code,
+                "study_uid":       study_uid,
+                "orthanc_study_id": orthanc_study_id,
+            }
+        except (httpx.TimeoutException, httpx.ConnectError,
+                httpx.RemoteProtocolError, httpx.ReadError,
+                httpx.WriteError, ConnectionResetError, OSError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            if attempt < MAX_RETRIES:
+                wait = 0.5 * (2 ** (attempt - 1))  # 0.5s, 1s, 2s ...
+                print(f"[UPLOAD] Retry {attempt}/{MAX_RETRIES} for {fname}: {last_error} — waiting {wait}s")
+                await asyncio.sleep(wait)
+            else:
+                print(f"[UPLOAD] FAILED after {MAX_RETRIES} attempts: {fname} — {last_error}")
+        except Exception as exc:
+            # Non-retryable error
+            last_error = f"{type(exc).__name__}: {exc}"
+            print(f"[UPLOAD] FAILED (non-retryable) {fname}: {last_error}")
+            break
+
+    return {
+        "path":      file_info["path"],
+        "ok":        False,
+        "error":     last_error,
+        "study_uid": study_uid,
+    }
 
 
 # ---------------------------------------------------------------------------
