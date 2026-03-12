@@ -544,6 +544,7 @@ async def upload_stream(files: list):
         upload_tasks = []
         files_remaining = list(files)  # copy so we can pop batches off
         batch_num = 0
+        total_preload_time = 0.0
 
         async def _fire_upload(info: dict, data: bytes):
             """Upload a single file with semaphore, push result to queue."""
@@ -568,7 +569,9 @@ async def upload_stream(files: list):
                   f"(free RAM: {free_mb:.0f} MB, avg file: {avg_mb:.2f} MB)")
 
             # Load this batch from disk (in thread pool)
+            t_batch_start = time.monotonic()
             loaded_batch = await loop.run_in_executor(None, _preload_batch, batch)
+            total_preload_time += (time.monotonic() - t_batch_start)
 
             # Fire upload tasks immediately for this batch
             for info, data, error in loaded_batch:
@@ -639,6 +642,9 @@ async def upload_stream(files: list):
 
     total_elapsed = time.monotonic() - wall_start
     upload_rate = total / total_elapsed if total_elapsed > 0 else 0
+    
+    print(f"\n[TIMING] Time taken to preload batches into memory: {_fmt_duration(total_preload_time)}")
+    print(f"[TIMING] Total pipeline time (preload + send to Orthanc): {_fmt_duration(total_elapsed)}")
     print(f"[UPLOAD] Upload complete: {total - failed} succeeded, "
           f"{failed} failed in {_fmt_duration(total_elapsed)} "
           f"({upload_rate:.1f} files/sec)")
